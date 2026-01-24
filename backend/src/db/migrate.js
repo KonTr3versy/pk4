@@ -14,6 +14,31 @@ const db = require('./connection');
 
 const migrations = [
   // ==========================================================================
+  // ATT&CK TECHNIQUE LIBRARY TABLE
+  // ==========================================================================
+  // Stores the full MITRE ATT&CK Enterprise technique catalog
+  `
+    CREATE TABLE IF NOT EXISTS attack_library (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      technique_id VARCHAR(20) NOT NULL UNIQUE,
+      technique_name VARCHAR(255) NOT NULL,
+      tactic VARCHAR(100) NOT NULL,
+      description TEXT,
+      platforms TEXT[],
+      data_sources TEXT[],
+      is_subtechnique BOOLEAN DEFAULT false,
+      parent_technique_id VARCHAR(20),
+      url VARCHAR(512),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    );
+  `,
+  
+  // Indexes for faster searching
+  `CREATE INDEX IF NOT EXISTS idx_attack_library_tactic ON attack_library(tactic);`,
+  `CREATE INDEX IF NOT EXISTS idx_attack_library_name ON attack_library(technique_name);`,
+  `CREATE INDEX IF NOT EXISTS idx_attack_library_technique_id ON attack_library(technique_id);`,
+  
+  // ==========================================================================
   // USERS TABLE
   // ==========================================================================
   `

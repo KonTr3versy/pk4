@@ -232,3 +232,57 @@ export function downloadFile(data, filename, type = 'application/json') {
 export async function checkHealth() {
   return apiRequest('/health');
 }
+
+// =============================================================================
+// MITRE ATT&CK
+// =============================================================================
+
+/**
+ * Get ATT&CK techniques from MITRE TAXII server
+ * @param {Object} filters - Optional filters
+ * @param {string} filters.tactic - Filter by tactic name
+ * @param {string} filters.platform - Filter by platform
+ * @param {string} filters.search - Search in name/description/ID
+ * @param {boolean} filters.subtechniques - Include sub-techniques (default: true)
+ * @param {boolean} filters.refresh - Force cache refresh
+ */
+export async function getAttackTechniques(filters = {}) {
+  const params = new URLSearchParams();
+  
+  if (filters.tactic) params.append('tactic', filters.tactic);
+  if (filters.platform) params.append('platform', filters.platform);
+  if (filters.search) params.append('search', filters.search);
+  if (filters.subtechniques === false) params.append('subtechniques', 'false');
+  if (filters.refresh) params.append('refresh', 'true');
+  
+  const queryString = params.toString();
+  return apiRequest(`/attack/techniques${queryString ? `?${queryString}` : ''}`);
+}
+
+/**
+ * Get a single ATT&CK technique by ID
+ */
+export async function getAttackTechnique(techniqueId) {
+  return apiRequest(`/attack/techniques/${techniqueId}`);
+}
+
+/**
+ * Get all ATT&CK tactics with technique counts
+ */
+export async function getAttackTactics() {
+  return apiRequest('/attack/tactics');
+}
+
+/**
+ * Get ATT&CK cache status
+ */
+export async function getAttackStatus() {
+  return apiRequest('/attack/status');
+}
+
+/**
+ * Force refresh ATT&CK cache from MITRE
+ */
+export async function refreshAttackCache() {
+  return apiRequest('/attack/refresh', { method: 'POST' });
+}
