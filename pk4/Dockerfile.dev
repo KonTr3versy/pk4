@@ -1,0 +1,27 @@
+# =============================================================================
+# PurpleKit Development Dockerfile
+# =============================================================================
+# This is used for local development with docker-compose.
+# It includes nodemon for hot reloading.
+# =============================================================================
+
+FROM node:20-alpine
+
+WORKDIR /app/backend
+
+# Copy package files
+COPY backend/package*.json ./
+
+# Install all dependencies (including devDependencies)
+RUN npm install
+
+# Copy source (will be overwritten by volume mount)
+COPY backend/src ./src
+
+# Set environment
+ENV NODE_ENV=development
+
+EXPOSE 3000
+
+# Default command (can be overridden by docker-compose)
+CMD ["npm", "run", "dev"]
