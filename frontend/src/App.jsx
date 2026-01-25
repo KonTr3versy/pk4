@@ -41,10 +41,11 @@ const DETECTION_OUTCOMES = [
 ];
 
 const KANBAN_COLUMNS = [
-  { id: 'planned', label: 'Planned' },
+  { id: 'ready', label: 'Ready' },
+  { id: 'blocked', label: 'Blocked' },
   { id: 'executing', label: 'Executing' },
   { id: 'validating', label: 'Validating' },
-  { id: 'complete', label: 'Complete' },
+  { id: 'done', label: 'Done' },
 ];
 
 // =============================================================================
@@ -731,6 +732,12 @@ function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onD
 }
 
 function KanbanView({ engagement, onUpdateTechnique, onEditTechnique, onBack }) {
+  const normalizedStatus = (status) => {
+    if (status === 'planned') return 'ready';
+    if (status === 'complete') return 'done';
+    return status;
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -740,9 +747,11 @@ function KanbanView({ engagement, onUpdateTechnique, onEditTechnique, onBack }) 
           <p className="text-sm text-gray-400">Kanban Board</p>
         </div>
       </div>
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         {KANBAN_COLUMNS.map(col => {
-          const techs = (engagement.techniques || []).filter(t => t.status === col.id);
+          const techs = (engagement.techniques || []).filter(
+            t => normalizedStatus(t.status) === col.id
+          );
           return (
             <div key={col.id} className="bg-gray-900 rounded-xl border border-gray-800">
               <div className="p-3 border-b border-gray-800 flex items-center justify-between">

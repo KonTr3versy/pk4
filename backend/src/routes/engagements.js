@@ -15,6 +15,26 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 
+let hasTechniquePositionColumn;
+
+async function checkTechniquePositionColumn() {
+  if (hasTechniquePositionColumn !== undefined) {
+    return hasTechniquePositionColumn;
+  }
+
+  const result = await db.query(
+    `
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'techniques'
+        AND column_name = 'position'
+    `
+  );
+
+  hasTechniquePositionColumn = result.rows.length > 0;
+  return hasTechniquePositionColumn;
+}
+
 // =============================================================================
 // GET /api/engagements
 // =============================================================================
@@ -25,7 +45,7 @@ router.get('/', async (req, res) => {
       SELECT 
         e.*,
         COUNT(t.id) as technique_count,
-        COUNT(CASE WHEN t.status = 'complete' THEN 1 END) as completed_count
+        COUNT(CASE WHEN t.status IN ('complete', 'done') THEN 1 END) as completed_count
       FROM engagements e
       LEFT JOIN techniques t ON e.id = t.engagement_id
       GROUP BY e.id
@@ -139,6 +159,20 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, methodology, status } = req.body;
+    const validMethodologies = ['atomic', 'scenario'];
+    const validStatuses = ['active', 'completed', 'archived'];
+
+    if (methodology !== undefined && !validMethodologies.includes(methodology)) {
+      return res.status(400).json({
+        error: `Methodology must be one of: ${validMethodologies.join(', ')}`
+      });
+    }
+
+    if (status !== undefined && !validStatuses.includes(status)) {
+      return res.status(400).json({
+        error: `Status must be one of: ${validStatuses.join(', ')}`
+      });
+    }
     
     // Build dynamic update query
     const updates = [];
@@ -269,6 +303,7 @@ router.post('/:id/techniques', async (req, res) => {
   try {
     const { id } = req.params;
     const { technique_id, technique_name, tactic, description } = req.body;
+    const supportsPosition = await checkTechniquePositionColumn();
 
     // Validate required fields
     if (!technique_id || !technique_name || !tactic) {
@@ -287,18 +322,29 @@ router.post('/:id/techniques', async (req, res) => {
       return res.status(404).json({ error: 'Engagement not found' });
     }
 
-    // Get max position for this engagement
-    const posResult = await db.query(
-      'SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM techniques WHERE engagement_id = $1',
-      [id]
-    );
+    let result;
 
-    const result = await db.query(
-      `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status, position)
-       VALUES ($1, $2, $3, $4, $5, 'ready', $6)
-       RETURNING *`,
-      [id, technique_id, technique_name, tactic, description || null, posResult.rows[0].next_pos]
-    );
+    if (supportsPosition) {
+      // Get max position for this engagement
+      const posResult = await db.query(
+        'SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM techniques WHERE engagement_id = $1',
+        [id]
+      );
+
+      result = await db.query(
+        `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status, position)
+         VALUES ($1, $2, $3, $4, $5, 'ready', $6)
+         RETURNING *`,
+        [id, technique_id, technique_name, tactic, description || null, posResult.rows[0].next_pos]
+      );
+    } else {
+      result = await db.query(
+        `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status)
+         VALUES ($1, $2, $3, $4, $5, 'ready')
+         RETURNING *`,
+        [id, technique_id, technique_name, tactic, description || null]
+      );
+    }
 
     // Return with empty outcomes array for consistency
     res.status(201).json({
@@ -320,6 +366,7 @@ router.post('/:id/techniques', async (req, res) => {
 router.get('/:id/board', async (req, res) => {
   try {
     const { id } = req.params;
+    const supportsPosition = await checkTechniquePositionColumn();
 
     // Verify engagement exists
     const engagementCheck = await db.query(
@@ -332,6 +379,8 @@ router.get('/:id/board', async (req, res) => {
     }
 
     // Get techniques with user info and outcomes
+    const orderBy = supportsPosition ? 't.position ASC, t.created_at ASC' : 't.created_at ASC';
+
     const techniquesResult = await db.query(
       `SELECT t.*,
               u.display_name as assigned_to_name,
@@ -351,7 +400,7 @@ router.get('/:id/board', async (req, res) => {
        LEFT JOIN detection_outcomes do ON t.id = do.technique_id
        WHERE t.engagement_id = $1
        GROUP BY t.id, u.display_name
-       ORDER BY t.position ASC, t.created_at ASC`,
+       ORDER BY ${orderBy}`,
       [id]
     );
 
@@ -488,6 +537,13 @@ router.patch('/:id/techniques/reorder', async (req, res) => {
   try {
     const { id } = req.params;
     const { techniqueId, newStatus, newPosition } = req.body;
+    const supportsPosition = await checkTechniquePositionColumn();
+
+    if (!supportsPosition) {
+      return res.status(400).json({
+        error: 'Technique ordering is unavailable until database migrations are applied.'
+      });
+    }
 
     if (!techniqueId) {
       return res.status(400).json({ error: 'techniqueId is required' });
