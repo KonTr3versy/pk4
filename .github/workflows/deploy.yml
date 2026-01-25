@@ -1,0 +1,66 @@
+# =============================================================================
+# PurpleKit - Automated Deployment Workflow
+# =============================================================================
+# This workflow automatically deploys to your EC2 instance when you push to main.
+#
+# SETUP REQUIRED:
+# 1. Go to your GitHub repo → Settings → Secrets and variables → Actions
+# 2. Add these repository secrets:
+#    - EC2_HOST: Your EC2 public IP address (e.g., 34.198.165.43)
+#    - EC2_USER: SSH username (usually "ec2-user" for Amazon Linux)
+#    - EC2_SSH_KEY: The ENTIRE contents of your .pem private key file
+#
+# HOW TO GET YOUR SSH KEY CONTENTS:
+#   On Mac/Linux: cat ~/path/to/your-key.pem
+#   Copy everything including the BEGIN and END lines
+# =============================================================================
+
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+  
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "=== Starting deployment ==="
+            cd ~/purplekit-app
+            
+            echo "=== Pulling latest code ==="
+            git pull origin main
+            
+            echo "=== Stopping current containers ==="
+            docker-compose -f docker-compose.prod.yml down
+            
+            echo "=== Building new image ==="
+            docker-compose -f docker-compose.prod.yml build
+            
+            echo "=== Running migrations ==="
+            docker-compose -f docker-compose.prod.yml run --rm purplekit node src/db/migrate.js
+            
+            echo "=== Starting containers ==="
+            docker-compose -f docker-compose.prod.yml up -d
+            
+            echo "=== Checking container health ==="
+            sleep 5
+            docker-compose -f docker-compose.prod.yml ps
+            
+            echo "=== Deployment complete! ==="

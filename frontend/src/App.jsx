@@ -1,0 +1,1212 @@
+/**
+ * PurpleKit - Main Application Component
+ * 
+ * This is the main entry point for the React frontend.
+ * It manages global state and renders the appropriate views.
+ */
+
+import React, { useState, useEffect } from 'react';
+import {
+  Shield, Plus, ChevronRight, CheckCircle, AlertTriangle, XCircle, Eye,
+  Zap, Network, BarChart3, Download, Trash2, Edit3, Save, X,
+  GripVertical, Target, Monitor, Loader2, RefreshCw, LogOut, User, Lock,
+  Clipboard, PlayCircle, Settings, FileText, Clock, Activity, AlertCircle
+} from 'lucide-react';
+
+import * as api from './api/client';
+import { EngagementWizard, ExecutionBoard, PreExecutionChecklist, PlanningWorkflow } from './components/planning';
+
+// =============================================================================
+// CONSTANTS
+// =============================================================================
+
+const SAMPLE_TECHNIQUES = [
+  { id: 'T1059.001', name: 'PowerShell', tactic: 'Execution', description: 'Adversaries may abuse PowerShell commands and scripts for execution.' },
+  { id: 'T1059.003', name: 'Windows Command Shell', tactic: 'Execution', description: 'Adversaries may abuse the Windows command shell for execution.' },
+  { id: 'T1053.005', name: 'Scheduled Task', tactic: 'Persistence', description: 'Adversaries may abuse the Windows Task Scheduler.' },
+  { id: 'T1547.001', name: 'Registry Run Keys', tactic: 'Persistence', description: 'Adversaries may achieve persistence via registry run keys.' },
+  { id: 'T1003.001', name: 'LSASS Memory', tactic: 'Credential Access', description: 'Adversaries may attempt to access LSASS process memory.' },
+  { id: 'T1021.001', name: 'Remote Desktop Protocol', tactic: 'Lateral Movement', description: 'Adversaries may use RDP with valid credentials.' },
+  { id: 'T1082', name: 'System Information Discovery', tactic: 'Discovery', description: 'Get detailed information about the OS.' },
+  { id: 'T1486', name: 'Data Encrypted for Impact', tactic: 'Impact', description: 'Encrypt data to interrupt availability.' },
+  { id: 'T1027', name: 'Obfuscated Files', tactic: 'Defense Evasion', description: 'Make files difficult to analyze.' },
+  { id: 'T1566.001', name: 'Spearphishing Attachment', tactic: 'Initial Access', description: 'Send emails with malicious attachments.' },
+];
+
+const DETECTION_OUTCOMES = [
+  { id: 'logged', label: 'Logged', color: 'blue', description: 'Telemetry captured but no alert' },
+  { id: 'alerted', label: 'Alerted', color: 'yellow', description: 'Alert fired and analyst notified' },
+  { id: 'prevented', label: 'Prevented', color: 'green', description: 'Attack blocked by control' },
+  { id: 'not_logged', label: 'Not Logged', color: 'red', description: 'No telemetry captured' },
+];
+
+const KANBAN_COLUMNS = [
+  { id: 'ready', label: 'Ready' },
+  { id: 'blocked', label: 'Blocked' },
+  { id: 'executing', label: 'Executing' },
+  { id: 'validating', label: 'Validating' },
+  { id: 'done', label: 'Done' },
+];
+
+// =============================================================================
+// MAIN APP
+// =============================================================================
+
+export default function App() {
+  // Auth state
+  const [authState, setAuthState] = useState('loading');
+  const [user, setUser] = useState(null);
+  
+  // View state
+  const [currentView, setCurrentView] = useState('dashboard');
+  const [selectedEngagement, setSelectedEngagement] = useState(null);
+  
+  // Data state
+  const [engagements, setEngagements] = useState([]);
+  const [securityControls, setSecurityControls] = useState([]);
+  
+  // UI state
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [showNewEngagementForm, setShowNewEngagementForm] = useState(false);
+  const [showEngagementWizard, setShowEngagementWizard] = useState(false);
+  const [showAddTechniqueModal, setShowAddTechniqueModal] = useState(false);
+  const [editingTechnique, setEditingTechnique] = useState(null);
+  const [showChecklist, setShowChecklist] = useState(false);
+
+  useEffect(() => {
+    checkAuth();
+  }, []);
+
+  async function checkAuth() {
+    try {
+      const status = await api.checkAuthStatus();
+      
+      if (status.setupRequired) {
+        setAuthState('setup');
+        return;
+      }
+      
+      if (api.isLoggedIn()) {
+        try {
+          const currentUser = await api.getCurrentUser();
+          setUser(currentUser);
+          setAuthState('authenticated');
+          loadData();
+        } catch (err) {
+          api.logout();
+          setAuthState('login');
+        }
+      } else {
+        setAuthState('login');
+      }
+    } catch (err) {
+      console.error('Auth check failed:', err);
+      setError('Failed to connect to server');
+      setAuthState('login');
+    }
+  }
+
+  async function handleLogin(username, password) {
+    const data = await api.login(username, password);
+    setUser(data.user);
+    setAuthState('authenticated');
+    loadData();
+  }
+
+  async function handleSetup(username, password, displayName) {
+    const data = await api.setupAdmin(username, password, displayName);
+    setUser(data.user);
+    setAuthState('authenticated');
+    loadData();
+  }
+
+  function handleLogout() {
+    api.logout();
+    setUser(null);
+    setAuthState('login');
+    setEngagements([]);
+    setSelectedEngagement(null);
+  }
+
+  async function loadData() {
+    setLoading(true);
+    setError(null);
+    try {
+      const [engagementsData, controlsData] = await Promise.all([
+        api.getEngagements(),
+        api.getSecurityControls(),
+      ]);
+      setEngagements(engagementsData);
+      setSecurityControls(controlsData);
+    } catch (err) {
+      setError('Failed to load data');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadEngagement(id) {
+    try {
+      const data = await api.getEngagement(id);
+      setSelectedEngagement(data);
+      return data;
+    } catch (err) {
+      setError('Failed to load engagement');
+      console.error(err);
+    }
+  }
+
+  async function handleCreateEngagement(data) {
+    try {
+      const newEngagement = await api.createEngagement(data);
+      setEngagements([newEngagement, ...engagements]);
+      setSelectedEngagement({ ...newEngagement, techniques: [] });
+      setShowNewEngagementForm(false);
+      setCurrentView('engagement-detail');
+    } catch (err) {
+      setError('Failed to create engagement');
+    }
+  }
+
+  function handleWizardComplete(engagement) {
+    setEngagements([engagement, ...engagements]);
+    loadEngagement(engagement.id).then(() => {
+      setShowEngagementWizard(false);
+      setCurrentView('engagement-detail');
+    });
+  }
+
+  async function handleDeleteEngagement(id) {
+    if (!window.confirm('Delete this engagement?')) return;
+    try {
+      await api.deleteEngagement(id);
+      setEngagements(engagements.filter(e => e.id !== id));
+      if (selectedEngagement?.id === id) {
+        setSelectedEngagement(null);
+        setCurrentView('engagements');
+      }
+    } catch (err) {
+      setError('Failed to delete engagement');
+    }
+  }
+
+  async function handleAddTechnique(technique) {
+    if (!selectedEngagement) return;
+    try {
+      const newTechnique = await api.addTechnique(selectedEngagement.id, {
+        technique_id: technique.id,
+        technique_name: technique.name,
+        tactic: technique.tactic,
+        description: technique.description,
+      });
+      setSelectedEngagement({
+        ...selectedEngagement,
+        techniques: [...selectedEngagement.techniques, newTechnique],
+      });
+    } catch (err) {
+      setError('Failed to add technique');
+    }
+  }
+
+  async function handleUpdateTechnique(techniqueId, updates) {
+    try {
+      const updated = await api.updateTechnique(techniqueId, updates);
+      setSelectedEngagement({
+        ...selectedEngagement,
+        techniques: selectedEngagement.techniques.map(t =>
+          t.id === techniqueId ? updated : t
+        ),
+      });
+    } catch (err) {
+      setError('Failed to update technique');
+    }
+  }
+
+  async function handleDeleteTechnique(techniqueId) {
+    try {
+      await api.deleteTechnique(techniqueId);
+      setSelectedEngagement({
+        ...selectedEngagement,
+        techniques: selectedEngagement.techniques.filter(t => t.id !== techniqueId),
+      });
+    } catch (err) {
+      setError('Failed to delete technique');
+    }
+  }
+
+  async function handleExportJSON() {
+    if (!selectedEngagement) return;
+    try {
+      const data = await api.exportJSON(selectedEngagement.id);
+      api.downloadFile(data, `purplekit-${selectedEngagement.name.replace(/\s+/g, '-')}.json`);
+    } catch (err) {
+      setError('Failed to export');
+    }
+  }
+
+  async function handleExportCSV() {
+    if (!selectedEngagement) return;
+    try {
+      const data = await api.exportCSV(selectedEngagement.id);
+      api.downloadFile(data, `purplekit-${selectedEngagement.name.replace(/\s+/g, '-')}.csv`, 'text/csv');
+    } catch (err) {
+      setError('Failed to export');
+    }
+  }
+
+  async function handleExportNavigator() {
+    if (!selectedEngagement) return;
+    try {
+      const data = await api.exportNavigator(selectedEngagement.id);
+      api.downloadFile(data, `purplekit-navigator-${selectedEngagement.name.replace(/\s+/g, '-')}.json`);
+    } catch (err) {
+      setError('Failed to export');
+    }
+  }
+
+  function getStats() {
+    const allTechniques = engagements.flatMap(e => e.techniques || []);
+    const complete = allTechniques.filter(t => t.status === 'complete');
+    const totalTechniques = engagements.reduce((sum, e) => sum + (e.technique_count || e.techniques?.length || 0), 0);
+    const completedTechniques = engagements.reduce((sum, e) => sum + (e.completed_count || 0), 0);
+    
+    return {
+      totalEngagements: engagements.length,
+      totalTechniques,
+      completedTechniques,
+      detectionRate: complete.length > 0
+        ? Math.round((complete.filter(t => (t.outcomes || []).some(o => (o.outcome_type || o) === 'alerted' || (o.outcome_type || o) === 'prevented')).length / complete.length) * 100)
+        : 0,
+    };
+  }
+
+  // Loading
+  if (authState === 'loading') {
+    return (
+      <div className="min-h-screen bg-gray-950 text-gray-100 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-purple-500" />
+          <p className="text-gray-400">Loading PurpleKit...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Setup
+  if (authState === 'setup') {
+    return <SetupScreen onSetup={handleSetup} />;
+  }
+
+  // Login
+  if (authState === 'login') {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
+  // Main app
+  return (
+    <div className="min-h-screen bg-gray-950 text-gray-100">
+      {error && (
+        <div className="bg-red-900/50 border-b border-red-800 px-4 py-3 flex items-center justify-between">
+          <span className="text-red-200">{error}</span>
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-200">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      <nav className="bg-gray-900 border-b border-gray-800 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-purple-600 rounded-lg flex items-center justify-center">
+              <Shield className="w-5 h-5 text-white" />
+            </div>
+            <span className="text-lg font-bold">
+              <span className="text-white">Purple</span>
+              <span className="text-purple-400">Kit</span>
+            </span>
+          </div>
+          <div className="flex items-center gap-1">
+            <NavButton active={currentView === 'dashboard'} onClick={() => setCurrentView('dashboard')} icon={BarChart3} label="Dashboard" />
+            <NavButton active={currentView === 'engagements' || currentView === 'engagement-detail'} onClick={() => setCurrentView('engagements')} icon={Target} label="Engagements" />
+            {selectedEngagement && (
+              <>
+                <NavButton active={currentView === 'planning'} onClick={() => setCurrentView('planning')} icon={Settings} label="Planning" />
+                <NavButton active={currentView === 'kanban'} onClick={() => setCurrentView('kanban')} icon={GripVertical} label="Kanban" />
+                <NavButton active={currentView === 'board'} onClick={() => setCurrentView('board')} icon={PlayCircle} label="Board" />
+              </>
+            )}
+            <button onClick={loadData} className="ml-2 p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg" title="Refresh">
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            <div className="ml-3 pl-3 border-l border-gray-700 flex items-center gap-2">
+              <span className="text-sm text-gray-400">{user?.displayName || user?.username}</span>
+              <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-400 hover:bg-gray-800 rounded-lg" title="Logout">
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      <main className="p-4">
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+          </div>
+        ) : (
+          <>
+            {currentView === 'dashboard' && (
+              <DashboardView stats={getStats()} engagements={engagements} onSelectEngagement={(e) => { loadEngagement(e.id).then(() => setCurrentView('engagement-detail')); }} onNew={() => setShowEngagementWizard(true)} onQuickNew={() => setShowNewEngagementForm(true)} />
+            )}
+            {currentView === 'engagements' && (
+              <EngagementsListView engagements={engagements} onSelect={(e) => { loadEngagement(e.id).then(() => setCurrentView('engagement-detail')); }} onDelete={handleDeleteEngagement} onNew={() => setShowEngagementWizard(true)} onQuickNew={() => setShowNewEngagementForm(true)} />
+            )}
+            {currentView === 'engagement-detail' && selectedEngagement && (
+              <EngagementDetailView engagement={selectedEngagement} onAddTechnique={() => setShowAddTechniqueModal(true)} onEditTechnique={setEditingTechnique} onDeleteTechnique={handleDeleteTechnique} onUpdateTechnique={handleUpdateTechnique} onExportJSON={handleExportJSON} onExportCSV={handleExportCSV} onExportNavigator={handleExportNavigator} onBack={() => setCurrentView('engagements')} onShowChecklist={() => setShowChecklist(true)} />
+            )}
+            {currentView === 'kanban' && selectedEngagement && (
+              <KanbanView engagement={selectedEngagement} onUpdateTechnique={handleUpdateTechnique} onEditTechnique={setEditingTechnique} onBack={() => setCurrentView('engagement-detail')} />
+            )}
+            {currentView === 'board' && selectedEngagement && (
+              <ExecutionBoard engagementId={selectedEngagement.id} onEditTechnique={setEditingTechnique} onBack={() => setCurrentView('engagement-detail')} />
+            )}
+            {currentView === 'planning' && selectedEngagement && (
+              <PlanningWorkflow engagement={selectedEngagement} onBack={() => setCurrentView('engagement-detail')} onUpdate={() => loadEngagement(selectedEngagement.id)} />
+            )}
+          </>
+        )}
+      </main>
+
+      {showNewEngagementForm && (
+        <Modal title="New Engagement" onClose={() => setShowNewEngagementForm(false)}>
+          <NewEngagementForm onCreate={handleCreateEngagement} onCancel={() => setShowNewEngagementForm(false)} />
+        </Modal>
+      )}
+      {showEngagementWizard && (
+        <EngagementWizard onComplete={handleWizardComplete} onCancel={() => setShowEngagementWizard(false)} />
+      )}
+      {showChecklist && selectedEngagement && (
+        <Modal title="Pre-Execution Checklist" onClose={() => setShowChecklist(false)}>
+          <PreExecutionChecklist engagementId={selectedEngagement.id} onAllComplete={() => {}} />
+        </Modal>
+      )}
+      {showAddTechniqueModal && (
+        <Modal title="Add Technique" onClose={() => setShowAddTechniqueModal(false)}>
+          <TechniqueSelector existing={selectedEngagement?.techniques || []} onAdd={(t) => { handleAddTechnique(t); setShowAddTechniqueModal(false); }} />
+        </Modal>
+      )}
+      {editingTechnique && (
+        <Modal title={editingTechnique.technique_name} subtitle={editingTechnique.technique_id} onClose={() => setEditingTechnique(null)}>
+          <EditTechniqueForm technique={editingTechnique} securityControls={securityControls} onSave={(updates) => { handleUpdateTechnique(editingTechnique.id, updates); setEditingTechnique(null); }} onCancel={() => setEditingTechnique(null)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// =============================================================================
+// AUTH SCREENS
+// =============================================================================
+
+function SetupScreen({ onSetup }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError('');
+    if (password !== confirmPassword) { setError('Passwords do not match'); return; }
+    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
+    setLoading(true);
+    try {
+      await onSetup(username, password, displayName);
+    } catch (err) {
+      setError(err.message || 'Setup failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <Shield className="w-10 h-10 text-white" />
+          </div>
+          <h1 className="text-2xl font-bold"><span className="text-white">Purple</span><span className="text-purple-400">Kit</span></h1>
+          <p className="text-gray-400 mt-2">Create your admin account</p>
+        </div>
+        <form onSubmit={handleSubmit} className="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-4">
+          {error && <div className="bg-red-900/50 border border-red-800 rounded-lg px-4 py-3 text-red-200 text-sm">{error}</div>}
+          <div>
+            <label className="block text-sm font-medium mb-1">Username</label>
+            <input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500" required minLength={3} autoFocus />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Display Name (optional)</label>
+            <input type="text" value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder={username || 'Your name'} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500" required minLength={8} />
+            <p className="text-xs text-gray-500 mt-1">Minimum 8 characters</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Confirm Password</label>
+            <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500" required />
+          </div>
+          <button type="submit" disabled={loading} className="w-full py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-lg font-medium flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+            Create Admin Account
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      await onLogin(username, password);
+    } catch (err) {
+      setError(err.message || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <Shield className="w-10 h-10 text-white" />
+          </div>
+          <h1 className="text-2xl font-bold"><span className="text-white">Purple</span><span className="text-purple-400">Kit</span></h1>
+          <p className="text-gray-400 mt-2">Sign in to continue</p>
+        </div>
+        <form onSubmit={handleSubmit} className="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-4">
+          {error && <div className="bg-red-900/50 border border-red-800 rounded-lg px-4 py-3 text-red-200 text-sm">{error}</div>}
+          <div>
+            <label className="block text-sm font-medium mb-1">Username</label>
+            <input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500" required autoFocus />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500" required />
+          </div>
+          <button type="submit" disabled={loading} className="w-full py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-lg font-medium flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <User className="w-4 h-4" />}
+            Sign In
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// COMPONENTS
+// =============================================================================
+
+function NavButton({ active, onClick, icon: Icon, label }) {
+  return (
+    <button onClick={onClick} className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-1.5 ${active ? 'bg-purple-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}>
+      <Icon className="w-4 h-4" /> {label}
+    </button>
+  );
+}
+
+function StatCard({ label, value, color }) {
+  const colors = { purple: 'bg-purple-500/10 text-purple-400 border-purple-500/20', blue: 'bg-blue-500/10 text-blue-400 border-blue-500/20', green: 'bg-green-500/10 text-green-400 border-green-500/20', yellow: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' };
+  return (
+    <div className={`rounded-xl border p-4 ${colors[color]}`}>
+      <div className="text-2xl font-bold">{value}</div>
+      <div className="text-xs opacity-80">{label}</div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }) {
+  const styles = { planned: 'bg-slate-500/20 text-slate-400', executing: 'bg-blue-500/20 text-blue-400', validating: 'bg-yellow-500/20 text-yellow-400', complete: 'bg-green-500/20 text-green-400' };
+  return <span className={`px-2 py-0.5 rounded text-xs capitalize ${styles[status]}`}>{status}</span>;
+}
+
+function OutcomeBadge({ outcome, small }) {
+  const type = typeof outcome === 'string' ? outcome : outcome.outcome_type;
+  const cfg = DETECTION_OUTCOMES.find(o => o.id === type);
+  if (!cfg) return null;
+  const colors = { blue: 'bg-blue-500/20 text-blue-400', yellow: 'bg-yellow-500/20 text-yellow-400', green: 'bg-green-500/20 text-green-400', red: 'bg-red-500/20 text-red-400' };
+  return <span className={`px-1.5 py-0.5 rounded ${small ? 'text-[10px]' : 'text-xs'} ${colors[cfg.color]}`}>{cfg.label}</span>;
+}
+
+function Modal({ title, subtitle, children, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-900 rounded-xl border border-gray-800 w-full max-w-lg max-h-[85vh] overflow-auto">
+        <div className="p-4 border-b border-gray-800 flex items-center justify-between sticky top-0 bg-gray-900 z-10">
+          <div>
+            <h2 className="font-bold">{title}</h2>
+            {subtitle && <p className="text-xs text-gray-500">{subtitle}</p>}
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-800 rounded"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// VIEWS
+// =============================================================================
+
+const ENGAGEMENT_STATUSES = [
+  { id: 'draft', label: 'Draft', color: 'gray' },
+  { id: 'planning', label: 'Planning', color: 'blue' },
+  { id: 'ready', label: 'Ready', color: 'yellow' },
+  { id: 'active', label: 'Active', color: 'purple' },
+  { id: 'reporting', label: 'Reporting', color: 'orange' },
+  { id: 'completed', label: 'Completed', color: 'green' }
+];
+
+function DashboardView({ stats, engagements, onSelectEngagement, onNew, onQuickNew, onOpenPlanning }) {
+  // Calculate status breakdown
+  const statusCounts = engagements.reduce((acc, e) => {
+    const status = e.status || 'draft';
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+
+  // Get active engagements (in progress)
+  const activeEngagements = engagements.filter(e =>
+    ['planning', 'ready', 'active', 'reporting'].includes(e.status || 'draft')
+  );
+
+  // Get engagements needing attention (draft or ready)
+  const needsAttention = engagements.filter(e =>
+    ['draft', 'ready'].includes(e.status || 'draft')
+  );
+
+  function getStatusColor(status) {
+    const colors = {
+      draft: 'bg-gray-500/20 text-gray-400',
+      planning: 'bg-blue-500/20 text-blue-400',
+      ready: 'bg-yellow-500/20 text-yellow-400',
+      active: 'bg-purple-500/20 text-purple-400',
+      reporting: 'bg-orange-500/20 text-orange-400',
+      completed: 'bg-green-500/20 text-green-400'
+    };
+    return colors[status] || colors.draft;
+  }
+
+  function getStatusIcon(status) {
+    switch (status) {
+      case 'draft': return <Edit3 className="w-3 h-3" />;
+      case 'planning': return <Clipboard className="w-3 h-3" />;
+      case 'ready': return <CheckCircle className="w-3 h-3" />;
+      case 'active': return <Activity className="w-3 h-3" />;
+      case 'reporting': return <FileText className="w-3 h-3" />;
+      case 'completed': return <CheckCircle className="w-3 h-3" />;
+      default: return <Clock className="w-3 h-3" />;
+    }
+  }
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold">Dashboard</h1>
+        <button
+          onClick={onNew}
+          className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm font-medium"
+        >
+          <Plus className="w-4 h-4" />
+          New Engagement
+        </button>
+      </div>
+
+      {/* Stats Grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="Total Engagements" value={stats.totalEngagements} color="purple" />
+        <StatCard label="Techniques Tested" value={stats.totalTechniques} color="blue" />
+        <StatCard label="Techniques Completed" value={stats.completedTechniques} color="green" />
+        <StatCard label="Detection Rate" value={`${stats.detectionRate}%`} color="yellow" />
+      </div>
+
+      {/* Workflow Status Overview */}
+      {engagements.length > 0 && (
+        <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
+          <h2 className="font-semibold mb-4 flex items-center gap-2">
+            <Activity className="w-5 h-5 text-purple-400" />
+            Workflow Status
+          </h2>
+          <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+            {ENGAGEMENT_STATUSES.map(status => {
+              const count = statusCounts[status.id] || 0;
+              return (
+                <div
+                  key={status.id}
+                  className={`p-3 rounded-lg text-center ${count > 0 ? getStatusColor(status.id) : 'bg-gray-800/50 text-gray-600'}`}
+                >
+                  <div className="text-2xl font-bold">{count}</div>
+                  <div className="text-xs capitalize">{status.label}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* Active Engagements */}
+        <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold flex items-center gap-2">
+              <PlayCircle className="w-5 h-5 text-purple-400" />
+              Active Engagements
+            </h2>
+            <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">
+              {activeEngagements.length} in progress
+            </span>
+          </div>
+          {activeEngagements.length === 0 ? (
+            <div className="text-center py-6 text-gray-500">
+              <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">No active engagements</p>
+              <button onClick={onNew} className="text-purple-400 text-sm mt-2 hover:text-purple-300">
+                Start a new engagement
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {activeEngagements.slice(0, 4).map(e => (
+                <button
+                  key={e.id}
+                  onClick={() => onSelectEngagement(e)}
+                  className="w-full flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-750 text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                      e.methodology === 'atomic' ? 'bg-orange-500/20 text-orange-400' : 'bg-blue-500/20 text-blue-400'
+                    }`}>
+                      {e.methodology === 'atomic' ? <Zap className="w-4 h-4" /> : <Network className="w-4 h-4" />}
+                    </div>
+                    <div>
+                      <div className="font-medium text-sm">{e.name}</div>
+                      <div className="text-xs text-gray-400">
+                        {e.technique_count || 0} techniques • {e.completed_count || 0} done
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded text-xs flex items-center gap-1 ${getStatusColor(e.status || 'draft')}`}>
+                      {getStatusIcon(e.status || 'draft')}
+                      <span className="capitalize">{e.status || 'draft'}</span>
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-gray-500" />
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Needs Attention */}
+        <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-yellow-400" />
+              Needs Attention
+            </h2>
+            {needsAttention.length > 0 && (
+              <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs">
+                {needsAttention.length} pending
+              </span>
+            )}
+          </div>
+          {needsAttention.length === 0 ? (
+            <div className="text-center py-6 text-gray-500">
+              <CheckCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">All caught up!</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {needsAttention.slice(0, 4).map(e => (
+                <button
+                  key={e.id}
+                  onClick={() => onSelectEngagement(e)}
+                  className="w-full flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-750 text-left"
+                >
+                  <div>
+                    <div className="font-medium text-sm">{e.name}</div>
+                    <div className="text-xs text-gray-400">
+                      {(e.status || 'draft') === 'draft' ? 'Needs planning setup' : 'Ready to execute'}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded text-xs flex items-center gap-1 ${getStatusColor(e.status || 'draft')}`}>
+                      {getStatusIcon(e.status || 'draft')}
+                      <span className="capitalize">{e.status || 'draft'}</span>
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-gray-500" />
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Quick Actions */}
+      <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
+        <h2 className="font-semibold mb-4 flex items-center gap-2">
+          <Zap className="w-5 h-5 text-purple-400" />
+          Quick Actions
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <button
+            onClick={onNew}
+            className="p-4 bg-gray-800 hover:bg-gray-750 rounded-lg text-left group"
+          >
+            <div className="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center mb-2 group-hover:bg-purple-500/30">
+              <Plus className="w-5 h-5 text-purple-400" />
+            </div>
+            <div className="font-medium text-sm">New Engagement</div>
+            <div className="text-xs text-gray-500">Create with wizard</div>
+          </button>
+
+          <button
+            onClick={onQuickNew}
+            className="p-4 bg-gray-800 hover:bg-gray-750 rounded-lg text-left group"
+          >
+            <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center mb-2 group-hover:bg-blue-500/30">
+              <Zap className="w-5 h-5 text-blue-400" />
+            </div>
+            <div className="font-medium text-sm">Quick Create</div>
+            <div className="text-xs text-gray-500">Skip the wizard</div>
+          </button>
+
+          <button
+            onClick={() => engagements[0] && onSelectEngagement(engagements[0])}
+            disabled={!engagements.length}
+            className="p-4 bg-gray-800 hover:bg-gray-750 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-left group"
+          >
+            <div className="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center mb-2 group-hover:bg-green-500/30">
+              <Target className="w-5 h-5 text-green-400" />
+            </div>
+            <div className="font-medium text-sm">Continue Latest</div>
+            <div className="text-xs text-gray-500">Resume work</div>
+          </button>
+
+          <button
+            className="p-4 bg-gray-800 hover:bg-gray-750 rounded-lg text-left group"
+            onClick={() => window.open('https://attack.mitre.org/', '_blank')}
+          >
+            <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center mb-2 group-hover:bg-orange-500/30">
+              <Shield className="w-5 h-5 text-orange-400" />
+            </div>
+            <div className="font-medium text-sm">ATT&CK Matrix</div>
+            <div className="text-xs text-gray-500">MITRE reference</div>
+          </button>
+        </div>
+      </div>
+
+      {/* All Engagements */}
+      <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-semibold">All Engagements</h2>
+          <span className="text-sm text-gray-400">{engagements.length} total</span>
+        </div>
+        {engagements.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">
+            <Target className="w-10 h-10 mx-auto mb-3 opacity-50" />
+            <p className="mb-2">No engagements yet</p>
+            <button
+              onClick={onNew}
+              className="text-purple-400 hover:text-purple-300"
+            >
+              Create your first engagement
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {engagements.slice(0, 8).map(e => (
+              <button
+                key={e.id}
+                onClick={() => onSelectEngagement(e)}
+                className="w-full flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-750 text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                    e.methodology === 'atomic' ? 'bg-orange-500/20 text-orange-400' : 'bg-blue-500/20 text-blue-400'
+                  }`}>
+                    {e.methodology === 'atomic' ? <Zap className="w-4 h-4" /> : <Network className="w-4 h-4" />}
+                  </div>
+                  <div>
+                    <div className="font-medium text-sm">{e.name}</div>
+                    <div className="text-xs text-gray-400">
+                      {e.methodology === 'atomic' ? 'Atomic' : 'Scenario'} • {e.technique_count || 0} techniques
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`px-2 py-0.5 rounded text-xs flex items-center gap-1 ${getStatusColor(e.status || 'draft')}`}>
+                    {getStatusIcon(e.status || 'draft')}
+                    <span className="capitalize">{e.status || 'draft'}</span>
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-gray-500" />
+                </div>
+              </button>
+            ))}
+            {engagements.length > 8 && (
+              <div className="text-center pt-2">
+                <span className="text-sm text-gray-500">
+                  +{engagements.length - 8} more engagements
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EngagementsListView({ engagements, onSelect, onDelete, onNew, onQuickNew }) {
+  return (
+    <div className="max-w-4xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold">Engagements</h1>
+        <div className="flex gap-2">
+          <button onClick={onQuickNew} className="px-3 py-2 border border-gray-700 hover:bg-gray-800 rounded-lg text-sm text-gray-400 hover:text-white">
+            Quick Create
+          </button>
+          <button onClick={onNew} className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm">
+            <Plus className="w-4 h-4" /> New Engagement
+          </button>
+        </div>
+      </div>
+      {engagements.length === 0 ? (
+        <div className="bg-gray-900 rounded-xl border border-gray-800 p-10 text-center">
+          <Target className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+          <p className="text-gray-500 mb-4">No engagements yet</p>
+          <button onClick={onNew} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg">Create First Engagement</button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {engagements.map(e => (
+            <div key={e.id} className="bg-gray-900 rounded-xl border border-gray-800 p-3 flex items-center justify-between">
+              <button onClick={() => onSelect(e)} className="flex-1 text-left">
+                <div className="flex items-center gap-2">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${e.methodology === 'atomic' ? 'bg-orange-500/20 text-orange-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                    {e.methodology === 'atomic' ? <Zap className="w-4 h-4" /> : <Network className="w-4 h-4" />}
+                  </div>
+                  <div>
+                    <div className="font-medium text-sm">{e.name}</div>
+                    <div className="text-xs text-gray-400">{e.methodology === 'atomic' ? 'Atomic' : 'Scenario'} • {e.technique_count || 0} techniques</div>
+                  </div>
+                </div>
+              </button>
+              <button onClick={() => onDelete(e.id)} className="p-2 text-gray-400 hover:text-red-400 rounded">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onDeleteTechnique, onExportJSON, onExportCSV, onExportNavigator, onBack, onShowChecklist }) {
+  return (
+    <div className="max-w-5xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="p-1.5 hover:bg-gray-800 rounded"><ChevronRight className="w-4 h-4 rotate-180" /></button>
+          <div>
+            <h1 className="text-xl font-bold">{engagement.name}</h1>
+            <p className="text-sm text-gray-400">{engagement.methodology === 'atomic' ? 'Atomic' : 'Scenario'} • {engagement.techniques?.length || 0} techniques</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {onShowChecklist && (
+            <button onClick={onShowChecklist} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Clipboard className="w-4 h-4" /> Checklist</button>
+          )}
+          <button onClick={onExportJSON} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> JSON</button>
+          <button onClick={onExportCSV} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> CSV</button>
+          <button onClick={onExportNavigator} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> Navigator</button>
+          <button onClick={onAddTechnique} className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm"><Plus className="w-4 h-4" /> Add Technique</button>
+        </div>
+      </div>
+      <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+        {(!engagement.techniques || engagement.techniques.length === 0) ? (
+          <div className="p-10 text-center">
+            <Zap className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+            <p className="text-gray-500 mb-4">No techniques added</p>
+            <button onClick={onAddTechnique} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg">Add First Technique</button>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-gray-800/50">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium text-gray-400">Technique</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-400">Tactic</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-400">Status</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-400">Outcomes & Controls</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-400">TTD</th>
+                <th className="px-3 py-2 text-right font-medium text-gray-400">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800">
+              {engagement.techniques.map(t => (
+                <tr key={t.id} className="hover:bg-gray-800/30">
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{t.technique_name}</div>
+                    <div className="text-xs text-gray-500">{t.technique_id}</div>
+                  </td>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 bg-gray-800 rounded text-xs">{t.tactic}</span></td>
+                  <td className="px-3 py-2"><StatusBadge status={t.status} /></td>
+                  <td className="px-3 py-2">
+                    <div className="space-y-1">
+                      {(!t.outcomes || t.outcomes.length === 0) ? <span className="text-gray-500">—</span> : t.outcomes.map((o, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <OutcomeBadge outcome={o} />
+                          {o.control_name && <span className="text-xs text-gray-400 flex items-center gap-1"><Monitor className="w-3 h-3" />{o.control_name}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2">{t.time_to_detect ? `${t.time_to_detect}m` : '—'}</td>
+                  <td className="px-3 py-2 text-right">
+                    <button onClick={() => onEditTechnique(t)} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded"><Edit3 className="w-4 h-4" /></button>
+                    <button onClick={() => onDeleteTechnique(t.id)} className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-800 rounded"><Trash2 className="w-4 h-4" /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function KanbanView({ engagement, onUpdateTechnique, onEditTechnique, onBack }) {
+  const normalizedStatus = (status) => {
+    if (status === 'planned') return 'ready';
+    if (status === 'complete') return 'done';
+    return status;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button onClick={onBack} className="p-1.5 hover:bg-gray-800 rounded"><ChevronRight className="w-4 h-4 rotate-180" /></button>
+        <div>
+          <h1 className="text-xl font-bold">{engagement.name}</h1>
+          <p className="text-sm text-gray-400">Kanban Board</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-5 gap-3">
+        {KANBAN_COLUMNS.map(col => {
+          const techs = (engagement.techniques || []).filter(
+            t => normalizedStatus(t.status) === col.id
+          );
+          return (
+            <div key={col.id} className="bg-gray-900 rounded-xl border border-gray-800">
+              <div className="p-3 border-b border-gray-800 flex items-center justify-between">
+                <span className="font-medium text-sm">{col.label}</span>
+                <span className="px-2 py-0.5 bg-gray-800 rounded text-xs">{techs.length}</span>
+              </div>
+              <div className="p-2 space-y-2 min-h-[300px]">
+                {techs.map(t => (
+                  <div key={t.id} onClick={() => onEditTechnique(t)} className="bg-gray-800 rounded-lg p-2 cursor-pointer hover:bg-gray-750">
+                    <div className="font-medium text-xs">{t.technique_name}</div>
+                    <div className="text-xs text-gray-500">{t.technique_id}</div>
+                    <div className="mt-1.5 space-y-0.5">
+                      {(t.outcomes || []).map((o, i) => (
+                        <div key={i} className="flex items-center gap-1">
+                          <OutcomeBadge outcome={o} small />
+                          {o.control_name && <span className="text-[10px] text-gray-500">{o.control_name}</span>}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-1 mt-2 flex-wrap">
+                      {KANBAN_COLUMNS.filter(c => c.id !== col.id).map(c => (
+                        <button key={c.id} onClick={(e) => { e.stopPropagation(); onUpdateTechnique(t.id, { status: c.id }); }} className="px-1.5 py-0.5 text-xs bg-gray-700 hover:bg-gray-600 rounded">→ {c.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// FORMS
+// =============================================================================
+
+function NewEngagementForm({ onCreate, onCancel }) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [methodology, setMethodology] = useState('atomic');
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium mb-1">Name</label>
+        <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Q1 Detection Validation" className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500" autoFocus />
+      </div>
+      <div>
+        <label className="block text-sm font-medium mb-1">Description</label>
+        <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500 resize-none" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium mb-2">Methodology</label>
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" onClick={() => setMethodology('atomic')} className={`p-3 rounded-lg border text-left ${methodology === 'atomic' ? 'border-orange-500 bg-orange-500/10' : 'border-gray-700'}`}>
+            <div className="flex items-center gap-1.5 mb-1"><Zap className="w-4 h-4 text-orange-400" /><span className="font-medium text-sm">Atomic</span></div>
+            <p className="text-xs text-gray-400">Isolated technique tests</p>
+          </button>
+          <button type="button" onClick={() => setMethodology('scenario')} className={`p-3 rounded-lg border text-left ${methodology === 'scenario' ? 'border-blue-500 bg-blue-500/10' : 'border-gray-700'}`}>
+            <div className="flex items-center gap-1.5 mb-1"><Network className="w-4 h-4 text-blue-400" /><span className="font-medium text-sm">Scenario</span></div>
+            <p className="text-xs text-gray-400">Full attack chain simulation</p>
+          </button>
+        </div>
+      </div>
+      <div className="flex gap-2 pt-2">
+        <button onClick={onCancel} className="flex-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm">Cancel</button>
+        <button onClick={() => name.trim() && onCreate({ name: name.trim(), description: description.trim(), methodology })} disabled={!name.trim()} className="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-lg text-sm">Create</button>
+      </div>
+    </div>
+  );
+}
+
+function TechniqueSelector({ existing, onAdd }) {
+  const [search, setSearch] = useState('');
+  const filtered = SAMPLE_TECHNIQUES.filter(t => {
+    const matches = t.name.toLowerCase().includes(search.toLowerCase()) || t.id.toLowerCase().includes(search.toLowerCase());
+    const notAdded = !existing.some(e => e.technique_id === t.id);
+    return matches && notAdded;
+  });
+
+  return (
+    <div className="space-y-3">
+      <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search techniques..." className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500" autoFocus />
+      <div className="space-y-2 max-h-[300px] overflow-auto">
+        {filtered.length === 0 ? <p className="text-gray-500 text-center py-4 text-sm">No matching techniques</p> : filtered.map(t => (
+          <button key={t.id} onClick={() => onAdd(t)} className="w-full text-left p-3 bg-gray-800 hover:bg-gray-750 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div><div className="font-medium text-sm">{t.name}</div><div className="text-xs text-gray-500">{t.id}</div></div>
+              <span className="px-2 py-0.5 bg-gray-700 rounded text-xs">{t.tactic}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EditTechniqueForm({ technique, securityControls, onSave, onCancel }) {
+  const [status, setStatus] = useState(technique.status);
+  const [outcomes, setOutcomes] = useState((technique.outcomes || []).map(o => ({ outcome_type: o.outcome_type, control_id: o.control_id || '', control_name: o.control_name || '', notes: o.notes || '' })));
+  const [ttd, setTtd] = useState(technique.time_to_detect || '');
+  const [notes, setNotes] = useState(technique.notes || '');
+
+  const toggleOutcome = (outcomeType) => {
+    const existing = outcomes.find(o => o.outcome_type === outcomeType);
+    if (existing) { setOutcomes(outcomes.filter(o => o.outcome_type !== outcomeType)); }
+    else { setOutcomes([...outcomes, { outcome_type: outcomeType, control_id: '', control_name: '', notes: '' }]); }
+  };
+
+  const updateOutcome = (outcomeType, field, value) => {
+    setOutcomes(outcomes.map(o => {
+      if (o.outcome_type === outcomeType) {
+        if (field === 'control_id') {
+          const control = securityControls.find(c => c.id === value);
+          return { ...o, control_id: value, control_name: control?.name || '' };
+        }
+        return { ...o, [field]: value };
+      }
+      return o;
+    }));
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium mb-2">Status</label>
+        <div className="grid grid-cols-4 gap-1">
+          {KANBAN_COLUMNS.map(c => (
+            <button key={c.id} onClick={() => setStatus(c.id)} className={`px-2 py-1.5 rounded text-xs ${status === c.id ? 'bg-purple-600 text-white' : 'bg-gray-800 hover:bg-gray-700'}`}>{c.label}</button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <label className="block text-sm font-medium mb-2">Detection Outcomes</label>
+        <p className="text-xs text-gray-400 mb-3">Select outcomes and specify which control detected them</p>
+        <div className="space-y-3">
+          {DETECTION_OUTCOMES.map(o => {
+            const isSelected = outcomes.some(oc => oc.outcome_type === o.id);
+            const outcomeData = outcomes.find(oc => oc.outcome_type === o.id);
+            const colors = { blue: isSelected ? 'border-blue-500 bg-blue-500/10' : 'border-gray-700', yellow: isSelected ? 'border-yellow-500 bg-yellow-500/10' : 'border-gray-700', green: isSelected ? 'border-green-500 bg-green-500/10' : 'border-gray-700', red: isSelected ? 'border-red-500 bg-red-500/10' : 'border-gray-700' };
+            return (
+              <div key={o.id} className={`rounded-lg border ${colors[o.color]} overflow-hidden`}>
+                <button onClick={() => toggleOutcome(o.id)} className="w-full p-3 text-left flex items-center justify-between">
+                  <div>
+                    <div className="font-medium text-sm flex items-center gap-2">{isSelected && <CheckCircle className="w-4 h-4 text-green-400" />}{o.label}</div>
+                    <div className="text-xs text-gray-400">{o.description}</div>
+                  </div>
+                </button>
+                {isSelected && (
+                  <div className="px-3 pb-3 space-y-2 border-t border-gray-700/50 pt-3">
+                    <select value={outcomeData.control_id} onChange={(e) => updateOutcome(o.id, 'control_id', e.target.value)} className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm focus:outline-none focus:border-purple-500">
+                      <option value="">Select a control...</option>
+                      {securityControls.map(control => (<option key={control.id} value={control.id}>{control.name} ({control.category})</option>))}
+                    </select>
+                    <input type="text" value={outcomeData.notes} onChange={(e) => updateOutcome(o.id, 'notes', e.target.value)} placeholder="Details (e.g., alert ID, rule name)" className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-xs focus:outline-none focus:border-purple-500" />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div>
+        <label className="block text-sm font-medium mb-1">Time to Detect (minutes)</label>
+        <input type="number" value={ttd} onChange={e => setTtd(e.target.value)} placeholder="e.g., 15" min="0" className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium mb-1">Notes</label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Additional observations..." className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500 resize-none" />
+      </div>
+      <div className="flex gap-2 pt-2">
+        <button onClick={onCancel} className="flex-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm">Cancel</button>
+        <button onClick={() => onSave({ status, outcomes, time_to_detect: ttd ? Number(ttd) : null, notes })} className="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm flex items-center justify-center gap-1.5"><Save className="w-4 h-4" /> Save</button>
+      </div>
+    </div>
+  );
+}

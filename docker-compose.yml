@@ -1,0 +1,79 @@
+# =============================================================================
+# PurpleKit - Docker Compose for Local Development
+# =============================================================================
+# 
+# Start everything:  docker-compose up --build
+# Stop everything:   docker-compose down
+# View logs:         docker-compose logs -f
+# Reset database:    docker-compose down -v
+#
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    container_name: purplekit-db
+    environment:
+      POSTGRES_USER: purplekit
+      POSTGRES_PASSWORD: purplekit_dev_password
+      POSTGRES_DB: purplekit
+    volumes:
+      # Persist data between restarts
+      - purplekit_data:/var/lib/postgresql/data
+    ports:
+      # Expose for direct access with psql/pgAdmin if needed
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U purplekit"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Backend API Server
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: purplekit-backend
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgresql://purplekit:purplekit_dev_password@db:5432/purplekit
+    volumes:
+      # Mount source code for hot reloading
+      - ./backend/src:/app/backend/src
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    # Run migrations then start server
+    command: sh -c "npm run migrate && npm run dev"
+
+  # ---------------------------------------------------------------------------
+  # Frontend Dev Server (with hot reload)
+  # ---------------------------------------------------------------------------
+  frontend:
+    image: node:20-alpine
+    container_name: purplekit-frontend
+    working_dir: /app
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - backend
+
+volumes:
+  purplekit_data:
