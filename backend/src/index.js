@@ -21,6 +21,10 @@ const exportRoutes = require('./routes/export');
 const attackRoutes = require('./routes/attack');
 const threatActorRoutes = require('./routes/threat-actors');
 const templateRoutes = require('./routes/templates');
+const workflowRoutes = require('./routes/workflow');
+const approvalRoutes = require('./routes/approvals');
+const documentRoutes = require('./routes/documents');
+const actionItemRoutes = require('./routes/action-items');
 
 // Import middleware
 const { requireAuth } = require('./middleware/auth');
@@ -92,6 +96,10 @@ app.use('/api/export', requireAuth, exportRoutes);
 app.use('/api/attack', requireAuth, attackRoutes);
 app.use('/api/threat-actors', requireAuth, threatActorRoutes);
 app.use('/api/templates', requireAuth, templateRoutes);
+app.use('/api/workflow', requireAuth, workflowRoutes);
+app.use('/api/approvals', requireAuth, approvalRoutes);
+app.use('/api/documents', requireAuth, documentRoutes);
+app.use('/api/action-items', requireAuth, actionItemRoutes);
 
 // =============================================================================
 // SERVE FRONTEND (Production)

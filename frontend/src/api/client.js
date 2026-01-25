@@ -473,3 +473,232 @@ export async function deleteTechniqueDependency(engagementId, dependencyId) {
 export async function getUsers() {
   return apiRequest('/auth/users');
 }
+
+// =============================================================================
+// WORKFLOW - Goals, Roles, Expectations, Preparation
+// =============================================================================
+
+// Goals
+export async function getEngagementGoals(engagementId) {
+  return apiRequest(`/workflow/engagements/${engagementId}/goals`);
+}
+
+export async function saveEngagementGoal(engagementId, data) {
+  return apiRequest(`/workflow/engagements/${engagementId}/goals`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteEngagementGoal(engagementId, goalId) {
+  return apiRequest(`/workflow/engagements/${engagementId}/goals/${goalId}`, {
+    method: 'DELETE',
+  });
+}
+
+// Roles
+export async function getEngagementRoles(engagementId) {
+  return apiRequest(`/workflow/engagements/${engagementId}/roles`);
+}
+
+export async function saveEngagementRole(engagementId, data) {
+  return apiRequest(`/workflow/engagements/${engagementId}/roles`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteEngagementRole(engagementId, roleId) {
+  return apiRequest(`/workflow/engagements/${engagementId}/roles/${roleId}`, {
+    method: 'DELETE',
+  });
+}
+
+// Expectations (Table Top Matrix)
+export async function getTechniqueExpectations(engagementId) {
+  return apiRequest(`/workflow/engagements/${engagementId}/expectations`);
+}
+
+export async function saveTechniqueExpectation(engagementId, data) {
+  return apiRequest(`/workflow/engagements/${engagementId}/expectations`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// Preparation Items
+export async function getPreparationItems(engagementId) {
+  return apiRequest(`/workflow/engagements/${engagementId}/preparation`);
+}
+
+export async function savePreparationItem(engagementId, data) {
+  return apiRequest(`/workflow/engagements/${engagementId}/preparation`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updatePreparationItem(engagementId, itemId, data) {
+  return apiRequest(`/workflow/engagements/${engagementId}/preparation/${itemId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePreparationItem(engagementId, itemId) {
+  return apiRequest(`/workflow/engagements/${engagementId}/preparation/${itemId}`, {
+    method: 'DELETE',
+  });
+}
+
+// Target Systems
+export async function getTargetSystems(engagementId) {
+  return apiRequest(`/workflow/engagements/${engagementId}/targets`);
+}
+
+export async function saveTargetSystem(engagementId, data) {
+  return apiRequest(`/workflow/engagements/${engagementId}/targets`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteTargetSystem(engagementId, targetId) {
+  return apiRequest(`/workflow/engagements/${engagementId}/targets/${targetId}`, {
+    method: 'DELETE',
+  });
+}
+
+// Attack Infrastructure
+export async function getAttackInfrastructure(engagementId) {
+  return apiRequest(`/workflow/engagements/${engagementId}/infrastructure`);
+}
+
+export async function saveAttackInfrastructure(engagementId, data) {
+  return apiRequest(`/workflow/engagements/${engagementId}/infrastructure`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteAttackInfrastructure(engagementId, infraId) {
+  return apiRequest(`/workflow/engagements/${engagementId}/infrastructure/${infraId}`, {
+    method: 'DELETE',
+  });
+}
+
+// =============================================================================
+// APPROVALS - Plan approval workflow
+// =============================================================================
+
+export async function getEngagementApprovals(engagementId) {
+  return apiRequest(`/approvals/engagements/${engagementId}`);
+}
+
+export async function submitApproval(engagementId, data) {
+  return apiRequest(`/approvals/engagements/${engagementId}`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateEngagementStatus(engagementId, newStatus) {
+  return apiRequest(`/approvals/engagements/${engagementId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: newStatus }),
+  });
+}
+
+export async function getEngagementWorkflowStatus(engagementId) {
+  return apiRequest(`/approvals/engagements/${engagementId}/workflow-status`);
+}
+
+// =============================================================================
+// DOCUMENTS - Plan and report generation
+// =============================================================================
+
+export async function generateDocument(engagementId, documentType) {
+  return apiRequest(`/documents/engagements/${engagementId}/generate`, {
+    method: 'POST',
+    body: JSON.stringify({ document_type: documentType }),
+  });
+}
+
+export async function getEngagementDocuments(engagementId) {
+  return apiRequest(`/documents/engagements/${engagementId}`);
+}
+
+export async function downloadDocument(engagementId, documentId) {
+  const token = getToken();
+  const url = `${API_BASE}/documents/engagements/${engagementId}/download/${documentId}`;
+
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to download document');
+  }
+
+  const blob = await response.blob();
+  const contentDisposition = response.headers.get('Content-Disposition');
+  const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
+  const filename = filenameMatch ? filenameMatch[1] : 'document.docx';
+
+  // Trigger download
+  const downloadUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(downloadUrl);
+}
+
+// =============================================================================
+// ACTION ITEMS - Findings and remediation tracking
+// =============================================================================
+
+export async function getActionItems(engagementId, filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.status) params.append('status', filters.status);
+  if (filters.severity) params.append('severity', filters.severity);
+  if (filters.owner_id) params.append('owner_id', filters.owner_id);
+  const queryString = params.toString();
+  return apiRequest(`/action-items/engagements/${engagementId}${queryString ? `?${queryString}` : ''}`);
+}
+
+export async function createActionItem(engagementId, data) {
+  return apiRequest(`/action-items/engagements/${engagementId}`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateActionItem(engagementId, itemId, data) {
+  return apiRequest(`/action-items/engagements/${engagementId}/${itemId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteActionItem(engagementId, itemId) {
+  return apiRequest(`/action-items/engagements/${engagementId}/${itemId}`, {
+    method: 'DELETE',
+  });
+}
+
+// Blue Team Results
+export async function getTechniqueResults(engagementId) {
+  return apiRequest(`/action-items/engagements/${engagementId}/results`);
+}
+
+export async function saveTechniqueResult(engagementId, data) {
+  return apiRequest(`/action-items/engagements/${engagementId}/results`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}

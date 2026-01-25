@@ -192,22 +192,13 @@ export default function EngagementWizard({ onComplete, onCancel }) {
         ];
       }
 
-      try {
-        for (const technique of techniquesToAdd) {
-          await api.addTechnique(engagement.id, {
-            technique_id: technique.technique_id,
-            technique_name: technique.technique_name,
-            tactic: technique.tactics?.[0] || technique.tactic || 'Unknown',
-            description: technique.description
-          });
-        }
-      } catch (err) {
-        try {
-          await api.deleteEngagement(engagement.id);
-        } catch (cleanupError) {
-          console.error('Failed to roll back engagement after technique error:', cleanupError);
-        }
-        throw new Error('Failed to add technique. Engagement creation was rolled back.');
+      for (const technique of techniquesToAdd) {
+        await api.addTechnique(engagement.id, {
+          technique_id: technique.technique_id,
+          technique_name: technique.technique_name,
+          tactic: technique.tactics?.[0] || technique.tactic || 'Unknown',
+          description: technique.description
+        });
       }
 
       onComplete?.(engagement);

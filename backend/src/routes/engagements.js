@@ -16,7 +16,6 @@ const router = express.Router();
 const db = require('../db/connection');
 
 let hasTechniquePositionColumn;
-let engagementMetadataColumns;
 
 async function checkTechniquePositionColumn() {
   if (hasTechniquePositionColumn !== undefined) {
@@ -34,30 +33,6 @@ async function checkTechniquePositionColumn() {
 
   hasTechniquePositionColumn = result.rows.length > 0;
   return hasTechniquePositionColumn;
-}
-
-async function getEngagementMetadataColumns() {
-  if (engagementMetadataColumns) {
-    return engagementMetadataColumns;
-  }
-
-  const result = await db.query(
-    `
-      SELECT column_name
-      FROM information_schema.columns
-      WHERE table_name = 'engagements'
-        AND column_name IN (
-          'start_date',
-          'end_date',
-          'red_team_lead',
-          'blue_team_lead',
-          'visibility_mode'
-        )
-    `
-  );
-
-  engagementMetadataColumns = new Set(result.rows.map(row => row.column_name));
-  return engagementMetadataColumns;
 }
 
 // =============================================================================
@@ -101,7 +76,6 @@ router.post('/', async (req, res) => {
       visibility_mode
     } = req.body;
     const validVisibilityModes = ['open', 'blind_blue', 'blind_red'];
-    const metadataColumns = await getEngagementMetadataColumns();
     
     // Validate required fields
     if (!name || !name.trim()) {
@@ -153,10 +127,20 @@ router.post('/', async (req, res) => {
     const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
 
     const result = await db.query(
-      `INSERT INTO engagements (${columns.join(', ')})
-       VALUES (${placeholders})
+      `INSERT INTO engagements
+       (name, description, methodology, start_date, end_date, red_team_lead, blue_team_lead, visibility_mode)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      values
+      [
+        name.trim(),
+        description?.trim() || null,
+        methodology || 'atomic',
+        start_date || null,
+        end_date || null,
+        red_team_lead || null,
+        blue_team_lead || null,
+        visibility_mode || 'open'
+      ]
     );
     
     res.status(201).json(result.rows[0]);
