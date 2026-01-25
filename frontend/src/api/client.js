@@ -286,3 +286,190 @@ export async function getAttackStatus() {
 export async function refreshAttackCache() {
   return apiRequest('/attack/refresh', { method: 'POST' });
 }
+
+// =============================================================================
+// ENHANCED ATTACK SEARCH & GAPS
+// =============================================================================
+
+/**
+ * Advanced technique search with multiple filters
+ */
+export async function searchAttackTechniques(filters = {}) {
+  const params = new URLSearchParams();
+
+  if (filters.tactics) params.append('tactics', filters.tactics);
+  if (filters.platforms) params.append('platforms', filters.platforms);
+  if (filters.dataSources) params.append('dataSources', filters.dataSources);
+  if (filters.complexity) params.append('complexity', filters.complexity);
+  if (filters.maxDuration) params.append('maxDuration', filters.maxDuration);
+  if (filters.threatActor) params.append('threatActor', filters.threatActor);
+  if (filters.showGaps) params.append('showGaps', 'true');
+  if (filters.search) params.append('search', filters.search);
+  if (filters.limit) params.append('limit', filters.limit);
+  if (filters.subtechniques === false) params.append('subtechniques', 'false');
+
+  const queryString = params.toString();
+  return apiRequest(`/attack/search${queryString ? `?${queryString}` : ''}`);
+}
+
+/**
+ * Get technique gaps for the organization
+ */
+export async function getAttackGaps(limit = 50) {
+  return apiRequest(`/attack/gaps?limit=${limit}`);
+}
+
+/**
+ * Get available data sources
+ */
+export async function getAttackDataSources() {
+  return apiRequest('/attack/data-sources');
+}
+
+// =============================================================================
+// THREAT ACTORS
+// =============================================================================
+
+export async function getThreatActors(search = '') {
+  const params = search ? `?search=${encodeURIComponent(search)}` : '';
+  return apiRequest(`/threat-actors${params}`);
+}
+
+export async function getThreatActor(id) {
+  return apiRequest(`/threat-actors/${id}`);
+}
+
+export async function getThreatActorTechniques(id) {
+  return apiRequest(`/threat-actors/${id}/techniques`);
+}
+
+export async function createThreatActor(data) {
+  return apiRequest('/threat-actors', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// =============================================================================
+// TEMPLATES
+// =============================================================================
+
+export async function getTemplates(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.methodology) params.append('methodology', filters.methodology);
+  if (filters.search) params.append('search', filters.search);
+  const queryString = params.toString();
+  return apiRequest(`/templates${queryString ? `?${queryString}` : ''}`);
+}
+
+export async function getTemplate(id) {
+  return apiRequest(`/templates/${id}`);
+}
+
+export async function createTemplate(data) {
+  return apiRequest('/templates', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function applyTemplate(templateId, engagementId) {
+  return apiRequest(`/templates/${templateId}/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ engagement_id: engagementId }),
+  });
+}
+
+// =============================================================================
+// BOARD & KANBAN
+// =============================================================================
+
+export async function getEngagementBoard(engagementId) {
+  return apiRequest(`/engagements/${engagementId}/board`);
+}
+
+export async function updateTechniqueStatus(engagementId, techniqueId, data) {
+  return apiRequest(`/engagements/${engagementId}/techniques/${techniqueId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function reorderTechniques(engagementId, data) {
+  return apiRequest(`/engagements/${engagementId}/techniques/reorder`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+// =============================================================================
+// TECHNIQUE COMMENTS
+// =============================================================================
+
+export async function getTechniqueComments(engagementId, techniqueId) {
+  return apiRequest(`/engagements/${engagementId}/techniques/${techniqueId}/comments`);
+}
+
+export async function addTechniqueComment(engagementId, techniqueId, comment) {
+  return apiRequest(`/engagements/${engagementId}/techniques/${techniqueId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ comment }),
+  });
+}
+
+export async function deleteTechniqueComment(engagementId, techniqueId, commentId) {
+  return apiRequest(`/engagements/${engagementId}/techniques/${techniqueId}/comments/${commentId}`, {
+    method: 'DELETE',
+  });
+}
+
+// =============================================================================
+// ENGAGEMENT CHECKLIST
+// =============================================================================
+
+export async function getEngagementChecklist(engagementId) {
+  return apiRequest(`/engagements/${engagementId}/checklist`);
+}
+
+export async function updateChecklistItem(engagementId, itemKey, data) {
+  return apiRequest(`/engagements/${engagementId}/checklist/${itemKey}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function addChecklistItem(engagementId, data) {
+  return apiRequest(`/engagements/${engagementId}/checklist`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// =============================================================================
+// TECHNIQUE DEPENDENCIES
+// =============================================================================
+
+export async function getEngagementDependencies(engagementId) {
+  return apiRequest(`/engagements/${engagementId}/dependencies`);
+}
+
+export async function addTechniqueDependency(engagementId, data) {
+  return apiRequest(`/engagements/${engagementId}/dependencies`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteTechniqueDependency(engagementId, dependencyId) {
+  return apiRequest(`/engagements/${engagementId}/dependencies/${dependencyId}`, {
+    method: 'DELETE',
+  });
+}
+
+// =============================================================================
+// USERS (for team assignment)
+// =============================================================================
+
+export async function getUsers() {
+  return apiRequest('/auth/users');
+}
