@@ -6,13 +6,15 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { 
-  Shield, Plus, ChevronRight, CheckCircle, AlertTriangle, XCircle, Eye, 
-  Zap, Network, BarChart3, Download, Trash2, Edit3, Save, X, 
-  GripVertical, Target, Monitor, Loader2, RefreshCw, LogOut, User, Lock
+import {
+  Shield, Plus, ChevronRight, CheckCircle, AlertTriangle, XCircle, Eye,
+  Zap, Network, BarChart3, Download, Trash2, Edit3, Save, X,
+  GripVertical, Target, Monitor, Loader2, RefreshCw, LogOut, User, Lock,
+  Clipboard, PlayCircle
 } from 'lucide-react';
 
 import * as api from './api/client';
+import { EngagementWizard, ExecutionBoard, PreExecutionChecklist } from './components/planning';
 
 // =============================================================================
 // CONSTANTS
@@ -66,8 +68,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showNewEngagementForm, setShowNewEngagementForm] = useState(false);
+  const [showEngagementWizard, setShowEngagementWizard] = useState(false);
   const [showAddTechniqueModal, setShowAddTechniqueModal] = useState(false);
   const [editingTechnique, setEditingTechnique] = useState(null);
+  const [showChecklist, setShowChecklist] = useState(false);
 
   useEffect(() => {
     checkAuth();
@@ -163,6 +167,14 @@ export default function App() {
     } catch (err) {
       setError('Failed to create engagement');
     }
+  }
+
+  function handleWizardComplete(engagement) {
+    setEngagements([engagement, ...engagements]);
+    loadEngagement(engagement.id).then(() => {
+      setShowEngagementWizard(false);
+      setCurrentView('engagement-detail');
+    });
   }
 
   async function handleDeleteEngagement(id) {
@@ -318,7 +330,10 @@ export default function App() {
             <NavButton active={currentView === 'dashboard'} onClick={() => setCurrentView('dashboard')} icon={BarChart3} label="Dashboard" />
             <NavButton active={currentView === 'engagements' || currentView === 'engagement-detail'} onClick={() => setCurrentView('engagements')} icon={Target} label="Engagements" />
             {selectedEngagement && (
-              <NavButton active={currentView === 'kanban'} onClick={() => setCurrentView('kanban')} icon={GripVertical} label="Kanban" />
+              <>
+                <NavButton active={currentView === 'kanban'} onClick={() => setCurrentView('kanban')} icon={GripVertical} label="Kanban" />
+                <NavButton active={currentView === 'board'} onClick={() => setCurrentView('board')} icon={PlayCircle} label="Board" />
+              </>
             )}
             <button onClick={loadData} className="ml-2 p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg" title="Refresh">
               <RefreshCw className="w-4 h-4" />
@@ -341,16 +356,19 @@ export default function App() {
         ) : (
           <>
             {currentView === 'dashboard' && (
-              <DashboardView stats={getStats()} engagements={engagements} onSelectEngagement={(e) => { loadEngagement(e.id).then(() => setCurrentView('engagement-detail')); }} onNew={() => setShowNewEngagementForm(true)} />
+              <DashboardView stats={getStats()} engagements={engagements} onSelectEngagement={(e) => { loadEngagement(e.id).then(() => setCurrentView('engagement-detail')); }} onNew={() => setShowEngagementWizard(true)} onQuickNew={() => setShowNewEngagementForm(true)} />
             )}
             {currentView === 'engagements' && (
-              <EngagementsListView engagements={engagements} onSelect={(e) => { loadEngagement(e.id).then(() => setCurrentView('engagement-detail')); }} onDelete={handleDeleteEngagement} onNew={() => setShowNewEngagementForm(true)} />
+              <EngagementsListView engagements={engagements} onSelect={(e) => { loadEngagement(e.id).then(() => setCurrentView('engagement-detail')); }} onDelete={handleDeleteEngagement} onNew={() => setShowEngagementWizard(true)} onQuickNew={() => setShowNewEngagementForm(true)} />
             )}
             {currentView === 'engagement-detail' && selectedEngagement && (
-              <EngagementDetailView engagement={selectedEngagement} onAddTechnique={() => setShowAddTechniqueModal(true)} onEditTechnique={setEditingTechnique} onDeleteTechnique={handleDeleteTechnique} onUpdateTechnique={handleUpdateTechnique} onExportJSON={handleExportJSON} onExportCSV={handleExportCSV} onExportNavigator={handleExportNavigator} onBack={() => setCurrentView('engagements')} />
+              <EngagementDetailView engagement={selectedEngagement} onAddTechnique={() => setShowAddTechniqueModal(true)} onEditTechnique={setEditingTechnique} onDeleteTechnique={handleDeleteTechnique} onUpdateTechnique={handleUpdateTechnique} onExportJSON={handleExportJSON} onExportCSV={handleExportCSV} onExportNavigator={handleExportNavigator} onBack={() => setCurrentView('engagements')} onShowChecklist={() => setShowChecklist(true)} />
             )}
             {currentView === 'kanban' && selectedEngagement && (
               <KanbanView engagement={selectedEngagement} onUpdateTechnique={handleUpdateTechnique} onEditTechnique={setEditingTechnique} onBack={() => setCurrentView('engagement-detail')} />
+            )}
+            {currentView === 'board' && selectedEngagement && (
+              <ExecutionBoard engagementId={selectedEngagement.id} onEditTechnique={setEditingTechnique} onBack={() => setCurrentView('engagement-detail')} />
             )}
           </>
         )}
@@ -359,6 +377,14 @@ export default function App() {
       {showNewEngagementForm && (
         <Modal title="New Engagement" onClose={() => setShowNewEngagementForm(false)}>
           <NewEngagementForm onCreate={handleCreateEngagement} onCancel={() => setShowNewEngagementForm(false)} />
+        </Modal>
+      )}
+      {showEngagementWizard && (
+        <EngagementWizard onComplete={handleWizardComplete} onCancel={() => setShowEngagementWizard(false)} />
+      )}
+      {showChecklist && selectedEngagement && (
+        <Modal title="Pre-Execution Checklist" onClose={() => setShowChecklist(false)}>
+          <PreExecutionChecklist engagementId={selectedEngagement.id} onAllComplete={() => {}} />
         </Modal>
       )}
       {showAddTechniqueModal && (
@@ -546,7 +572,7 @@ function Modal({ title, subtitle, children, onClose }) {
 // VIEWS
 // =============================================================================
 
-function DashboardView({ stats, engagements, onSelectEngagement, onNew }) {
+function DashboardView({ stats, engagements, onSelectEngagement, onNew, onQuickNew }) {
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       <h1 className="text-xl font-bold">Dashboard</h1>
@@ -559,7 +585,10 @@ function DashboardView({ stats, engagements, onSelectEngagement, onNew }) {
       <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold">Recent Engagements</h2>
-          <button onClick={onNew} className="text-sm text-purple-400 hover:text-purple-300">+ New</button>
+          <div className="flex gap-2">
+            <button onClick={onQuickNew} className="text-sm text-gray-400 hover:text-white">Quick</button>
+            <button onClick={onNew} className="text-sm text-purple-400 hover:text-purple-300">+ New Engagement</button>
+          </div>
         </div>
         {engagements.length === 0 ? (
           <p className="text-gray-500 text-center py-6">No engagements yet. Create your first one!</p>
@@ -581,14 +610,19 @@ function DashboardView({ stats, engagements, onSelectEngagement, onNew }) {
   );
 }
 
-function EngagementsListView({ engagements, onSelect, onDelete, onNew }) {
+function EngagementsListView({ engagements, onSelect, onDelete, onNew, onQuickNew }) {
   return (
     <div className="max-w-4xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Engagements</h1>
-        <button onClick={onNew} className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm">
-          <Plus className="w-4 h-4" /> New Engagement
-        </button>
+        <div className="flex gap-2">
+          <button onClick={onQuickNew} className="px-3 py-2 border border-gray-700 hover:bg-gray-800 rounded-lg text-sm text-gray-400 hover:text-white">
+            Quick Create
+          </button>
+          <button onClick={onNew} className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm">
+            <Plus className="w-4 h-4" /> New Engagement
+          </button>
+        </div>
       </div>
       {engagements.length === 0 ? (
         <div className="bg-gray-900 rounded-xl border border-gray-800 p-10 text-center">
@@ -622,7 +656,7 @@ function EngagementsListView({ engagements, onSelect, onDelete, onNew }) {
   );
 }
 
-function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onDeleteTechnique, onExportJSON, onExportCSV, onExportNavigator, onBack }) {
+function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onDeleteTechnique, onExportJSON, onExportCSV, onExportNavigator, onBack, onShowChecklist }) {
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
@@ -634,6 +668,9 @@ function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onD
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {onShowChecklist && (
+            <button onClick={onShowChecklist} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Clipboard className="w-4 h-4" /> Checklist</button>
+          )}
           <button onClick={onExportJSON} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> JSON</button>
           <button onClick={onExportCSV} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> CSV</button>
           <button onClick={onExportNavigator} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> Navigator</button>

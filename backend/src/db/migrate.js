@@ -231,6 +231,166 @@ const migrations = [
       FOR EACH ROW
       EXECUTE FUNCTION update_updated_at_column();
   `,
+
+  // ==========================================================================
+  // PHASE 1: TECHNIQUE METADATA ENHANCEMENTS
+  // ==========================================================================
+  // Add metadata columns to attack_library for filtering
+  `ALTER TABLE attack_library ADD COLUMN IF NOT EXISTS complexity VARCHAR(20);`,
+  `ALTER TABLE attack_library ADD COLUMN IF NOT EXISTS estimated_duration_minutes INTEGER;`,
+
+  // ==========================================================================
+  // THREAT ACTORS TABLE
+  // ==========================================================================
+  // Stores threat actor groups for technique association
+  `
+    CREATE TABLE IF NOT EXISTS threat_actors (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name VARCHAR(255) NOT NULL UNIQUE,
+      aliases TEXT[],
+      description TEXT,
+      source_url TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    );
+  `,
+
+  // Threat actor to technique mapping
+  `
+    CREATE TABLE IF NOT EXISTS threat_actor_techniques (
+      threat_actor_id UUID REFERENCES threat_actors(id) ON DELETE CASCADE,
+      technique_id VARCHAR(20) NOT NULL,
+      PRIMARY KEY (threat_actor_id, technique_id)
+    );
+  `,
+
+  `CREATE INDEX IF NOT EXISTS idx_threat_actor_techniques_actor ON threat_actor_techniques(threat_actor_id);`,
+  `CREATE INDEX IF NOT EXISTS idx_threat_actor_techniques_technique ON threat_actor_techniques(technique_id);`,
+
+  // ==========================================================================
+  // ENGAGEMENT TEMPLATES TABLE
+  // ==========================================================================
+  // Quick-start templates for common engagement types
+  `
+    CREATE TABLE IF NOT EXISTS engagement_templates (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name VARCHAR(255) NOT NULL,
+      description TEXT,
+      methodology VARCHAR(20) NOT NULL,
+      technique_ids TEXT[],
+      estimated_duration_hours INTEGER,
+      is_public BOOLEAN DEFAULT false,
+      created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+      CONSTRAINT valid_template_methodology CHECK (methodology IN ('atomic', 'scenario'))
+    );
+  `,
+
+  `CREATE INDEX IF NOT EXISTS idx_templates_public ON engagement_templates(is_public);`,
+
+  // ==========================================================================
+  // TECHNIQUE HISTORY TABLE
+  // ==========================================================================
+  // Track technique testing history for gap analysis
+  `
+    CREATE TABLE IF NOT EXISTS technique_history (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      technique_id VARCHAR(20) NOT NULL,
+      engagement_id UUID REFERENCES engagements(id) ON DELETE SET NULL,
+      tested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      outcome VARCHAR(20),
+
+      CONSTRAINT valid_history_outcome CHECK (outcome IN ('logged', 'alerted', 'prevented', 'not_logged'))
+    );
+  `,
+
+  `CREATE INDEX IF NOT EXISTS idx_technique_history_technique ON technique_history(technique_id);`,
+  `CREATE INDEX IF NOT EXISTS idx_technique_history_tested ON technique_history(tested_at);`,
+
+  // ==========================================================================
+  // PHASE 2: BOARD ENHANCEMENTS
+  // ==========================================================================
+  // Add workflow columns to techniques table
+  `ALTER TABLE techniques ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES users(id);`,
+  `ALTER TABLE techniques ADD COLUMN IF NOT EXISTS assigned_role VARCHAR(20);`,
+  `ALTER TABLE techniques ADD COLUMN IF NOT EXISTS started_at TIMESTAMP WITH TIME ZONE;`,
+  `ALTER TABLE techniques ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP WITH TIME ZONE;`,
+  `ALTER TABLE techniques ADD COLUMN IF NOT EXISTS position INTEGER DEFAULT 0;`,
+
+  // Update status constraint to include new statuses
+  `ALTER TABLE techniques DROP CONSTRAINT IF EXISTS valid_technique_status;`,
+  `
+    ALTER TABLE techniques ADD CONSTRAINT valid_technique_status
+    CHECK (status IN ('ready', 'planned', 'blocked', 'executing', 'validating', 'complete', 'done'));
+  `,
+
+  // ==========================================================================
+  // TECHNIQUE COMMENTS TABLE
+  // ==========================================================================
+  // Comments/activity log for coordination
+  `
+    CREATE TABLE IF NOT EXISTS technique_comments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      technique_id UUID REFERENCES techniques(id) ON DELETE CASCADE,
+      user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      comment TEXT NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    );
+  `,
+
+  `CREATE INDEX IF NOT EXISTS idx_technique_comments_technique ON technique_comments(technique_id);`,
+
+  // ==========================================================================
+  // ENGAGEMENT CHECKLIST TABLE
+  // ==========================================================================
+  // Pre-execution checklist for engagements
+  `
+    CREATE TABLE IF NOT EXISTS engagement_checklist (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      engagement_id UUID REFERENCES engagements(id) ON DELETE CASCADE,
+      item_key VARCHAR(50) NOT NULL,
+      item_label VARCHAR(255) NOT NULL,
+      is_checked BOOLEAN DEFAULT false,
+      checked_by UUID REFERENCES users(id),
+      checked_at TIMESTAMP WITH TIME ZONE,
+      notes TEXT,
+      display_order INTEGER DEFAULT 0,
+      UNIQUE(engagement_id, item_key)
+    );
+  `,
+
+  `CREATE INDEX IF NOT EXISTS idx_engagement_checklist_engagement ON engagement_checklist(engagement_id);`,
+
+  // ==========================================================================
+  // PHASE 4: TECHNIQUE DEPENDENCIES (SCENARIO MODE)
+  // ==========================================================================
+  // Technique dependency graph for scenario methodology
+  `
+    CREATE TABLE IF NOT EXISTS technique_dependencies (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      engagement_id UUID REFERENCES engagements(id) ON DELETE CASCADE,
+      technique_id VARCHAR(20) NOT NULL,
+      prerequisite_id VARCHAR(20) NOT NULL,
+      dependency_type VARCHAR(20) DEFAULT 'requires_success',
+      UNIQUE(engagement_id, technique_id, prerequisite_id),
+
+      CONSTRAINT valid_dependency_type CHECK (dependency_type IN ('requires_success', 'requires_completion'))
+    );
+  `,
+
+  `CREATE INDEX IF NOT EXISTS idx_technique_deps_engagement ON technique_dependencies(engagement_id);`,
+  `CREATE INDEX IF NOT EXISTS idx_technique_deps_technique ON technique_dependencies(technique_id);`,
+
+  // ==========================================================================
+  // ENGAGEMENT ADDITIONAL FIELDS
+  // ==========================================================================
+  // Add team leads and visibility mode to engagements
+  `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS red_team_lead UUID REFERENCES users(id);`,
+  `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS blue_team_lead UUID REFERENCES users(id);`,
+  `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS visibility_mode VARCHAR(20) DEFAULT 'open';`,
+  `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS start_date DATE;`,
+  `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS end_date DATE;`,
+  `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS template_id UUID REFERENCES engagement_templates(id);`,
 ];
 
 async function runMigrations() {

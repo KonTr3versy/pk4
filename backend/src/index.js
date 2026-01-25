@@ -19,6 +19,8 @@ const engagementRoutes = require('./routes/engagements');
 const techniqueRoutes = require('./routes/techniques');
 const exportRoutes = require('./routes/export');
 const attackRoutes = require('./routes/attack');
+const threatActorRoutes = require('./routes/threat-actors');
+const templateRoutes = require('./routes/templates');
 
 // Import middleware
 const { requireAuth } = require('./middleware/auth');
@@ -88,6 +90,8 @@ app.use('/api/engagements', requireAuth, engagementRoutes);
 app.use('/api/techniques', requireAuth, techniqueRoutes);
 app.use('/api/export', requireAuth, exportRoutes);
 app.use('/api/attack', requireAuth, attackRoutes);
+app.use('/api/threat-actors', requireAuth, threatActorRoutes);
+app.use('/api/templates', requireAuth, templateRoutes);
 
 // =============================================================================
 // SERVE FRONTEND (Production)

@@ -408,19 +408,348 @@ router.post('/refresh', async (req, res) => {
   try {
     console.log('[ATT&CK] Manual cache refresh requested');
     const data = await getTechniques(true);
-    
+
     res.json({
       success: true,
       message: 'Cache refreshed successfully',
       technique_count: data.technique_count,
       fetched_at: data.fetched_at
     });
-    
+
   } catch (error) {
     console.error('[ATT&CK] Error refreshing cache:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to refresh cache',
-      message: error.message 
+      message: error.message
+    });
+  }
+});
+
+// =============================================================================
+// Enhanced Search & Gap Analysis
+// =============================================================================
+const db = require('../db/connection');
+
+/**
+ * GET /api/attack/search
+ * Advanced technique search with multiple filters
+ * Query params:
+ *   - tactics: comma-separated tactic names
+ *   - platforms: comma-separated platforms
+ *   - dataSources: comma-separated data sources
+ *   - complexity: low, medium, high
+ *   - maxDuration: max minutes per technique
+ *   - threatActor: threat actor ID (filters to that actor's techniques)
+ *   - showGaps: boolean - prioritize untested/failed techniques
+ *   - search: text search in name/ID/description
+ *   - limit: number of results
+ */
+router.get('/search', async (req, res) => {
+  try {
+    const {
+      tactics,
+      platforms,
+      dataSources,
+      complexity,
+      maxDuration,
+      threatActor,
+      showGaps,
+      search,
+      limit,
+      subtechniques = 'true'
+    } = req.query;
+
+    const data = await getTechniques();
+    let techniques = [...data.techniques];
+
+    // Filter by tactics
+    if (tactics) {
+      const tacticList = tactics.split(',').map(t => t.trim().toLowerCase());
+      techniques = techniques.filter(t =>
+        t.tactics.some(tac => tacticList.includes(tac.toLowerCase()))
+      );
+    }
+
+    // Filter by platforms
+    if (platforms) {
+      const platformList = platforms.split(',').map(p => p.trim().toLowerCase());
+      techniques = techniques.filter(t =>
+        t.platforms.some(p => platformList.includes(p.toLowerCase()))
+      );
+    }
+
+    // Filter by data sources
+    if (dataSources) {
+      const dataSourceList = dataSources.split(',').map(d => d.trim().toLowerCase());
+      techniques = techniques.filter(t =>
+        t.data_sources.some(ds =>
+          dataSourceList.some(searchDs => ds.toLowerCase().includes(searchDs))
+        )
+      );
+    }
+
+    // Filter out sub-techniques if requested
+    if (subtechniques === 'false') {
+      techniques = techniques.filter(t => !t.is_subtechnique);
+    }
+
+    // Text search
+    if (search) {
+      const searchLower = search.toLowerCase();
+      techniques = techniques.filter(t =>
+        t.technique_id.toLowerCase().includes(searchLower) ||
+        t.technique_name.toLowerCase().includes(searchLower) ||
+        t.description.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Filter by threat actor techniques
+    if (threatActor) {
+      try {
+        const actorTechniques = await db.query(
+          'SELECT technique_id FROM threat_actor_techniques WHERE threat_actor_id = $1',
+          [threatActor]
+        );
+        const actorTechniqueIds = actorTechniques.rows.map(r => r.technique_id.toLowerCase());
+        techniques = techniques.filter(t =>
+          actorTechniqueIds.includes(t.technique_id.toLowerCase())
+        );
+      } catch (err) {
+        console.error('Error fetching threat actor techniques:', err);
+      }
+    }
+
+    // Filter by complexity (from attack_library metadata)
+    if (complexity) {
+      try {
+        const complexityResult = await db.query(
+          'SELECT technique_id FROM attack_library WHERE complexity = $1',
+          [complexity.toLowerCase()]
+        );
+        const complexityTechniqueIds = complexityResult.rows.map(r => r.technique_id.toLowerCase());
+        if (complexityTechniqueIds.length > 0) {
+          techniques = techniques.filter(t =>
+            complexityTechniqueIds.includes(t.technique_id.toLowerCase())
+          );
+        }
+      } catch (err) {
+        console.error('Error filtering by complexity:', err);
+      }
+    }
+
+    // Filter by max duration (from attack_library metadata)
+    if (maxDuration) {
+      try {
+        const durationResult = await db.query(
+          'SELECT technique_id FROM attack_library WHERE estimated_duration_minutes <= $1',
+          [parseInt(maxDuration)]
+        );
+        const durationTechniqueIds = durationResult.rows.map(r => r.technique_id.toLowerCase());
+        if (durationTechniqueIds.length > 0) {
+          techniques = techniques.filter(t =>
+            durationTechniqueIds.includes(t.technique_id.toLowerCase())
+          );
+        }
+      } catch (err) {
+        console.error('Error filtering by duration:', err);
+      }
+    }
+
+    // Show gaps - prioritize untested or poorly detected techniques
+    if (showGaps === 'true') {
+      try {
+        // Get technique testing history
+        const historyResult = await db.query(`
+          SELECT technique_id,
+                 MAX(tested_at) as last_tested,
+                 MAX(CASE WHEN outcome = 'not_logged' THEN 1 ELSE 0 END) as has_gap
+          FROM technique_history
+          GROUP BY technique_id
+        `);
+
+        const testedMap = new Map();
+        historyResult.rows.forEach(row => {
+          testedMap.set(row.technique_id.toLowerCase(), {
+            lastTested: row.last_tested,
+            hasGap: row.has_gap === 1
+          });
+        });
+
+        // Sort: untested first, then gaps, then by last tested (oldest first)
+        techniques.sort((a, b) => {
+          const aData = testedMap.get(a.technique_id.toLowerCase());
+          const bData = testedMap.get(b.technique_id.toLowerCase());
+
+          // Untested techniques come first
+          if (!aData && bData) return -1;
+          if (aData && !bData) return 1;
+
+          if (aData && bData) {
+            // Gap techniques come before non-gaps
+            if (aData.hasGap && !bData.hasGap) return -1;
+            if (!aData.hasGap && bData.hasGap) return 1;
+
+            // Older tested techniques come before recently tested
+            return new Date(aData.lastTested) - new Date(bData.lastTested);
+          }
+
+          return 0;
+        });
+      } catch (err) {
+        console.error('Error fetching gap analysis:', err);
+      }
+    }
+
+    // Apply limit
+    if (limit) {
+      techniques = techniques.slice(0, parseInt(limit));
+    }
+
+    res.json({
+      technique_count: techniques.length,
+      filters_applied: {
+        tactics: tactics || null,
+        platforms: platforms || null,
+        dataSources: dataSources || null,
+        complexity: complexity || null,
+        maxDuration: maxDuration || null,
+        threatActor: threatActor || null,
+        showGaps: showGaps || null,
+        search: search || null
+      },
+      techniques
+    });
+
+  } catch (error) {
+    console.error('[ATT&CK] Error in advanced search:', error);
+    res.status(500).json({
+      error: 'Failed to search techniques',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/attack/gaps
+ * Returns techniques that have never been tested or had poor outcomes
+ */
+router.get('/gaps', async (req, res) => {
+  try {
+    const { limit = 50 } = req.query;
+    const data = await getTechniques();
+    const allTechniqueIds = data.techniques.map(t => t.technique_id.toLowerCase());
+
+    // Get all tested techniques with their outcomes
+    const historyResult = await db.query(`
+      SELECT
+        technique_id,
+        MAX(tested_at) as last_tested,
+        MAX(CASE WHEN outcome IN ('alerted', 'prevented') THEN tested_at END) as last_good_test,
+        MAX(CASE WHEN outcome = 'not_logged' THEN tested_at END) as last_bad_test
+      FROM technique_history
+      GROUP BY technique_id
+    `);
+
+    const testedMap = new Map();
+    historyResult.rows.forEach(row => {
+      testedMap.set(row.technique_id.toLowerCase(), {
+        lastTested: row.last_tested,
+        lastGoodTest: row.last_good_test,
+        lastBadTest: row.last_bad_test
+      });
+    });
+
+    // Categorize techniques
+    const neverTested = [];
+    const stale = []; // Tested but more than 6 months ago
+    const gaps = []; // Last test was not_logged
+
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+    data.techniques.forEach(technique => {
+      const history = testedMap.get(technique.technique_id.toLowerCase());
+
+      if (!history) {
+        neverTested.push({
+          ...technique,
+          gap_reason: 'never_tested',
+          last_tested: null
+        });
+      } else if (history.lastBadTest && (!history.lastGoodTest || new Date(history.lastBadTest) > new Date(history.lastGoodTest))) {
+        gaps.push({
+          ...technique,
+          gap_reason: 'detection_gap',
+          last_tested: history.lastTested
+        });
+      } else if (new Date(history.lastTested) < sixMonthsAgo) {
+        stale.push({
+          ...technique,
+          gap_reason: 'stale',
+          last_tested: history.lastTested
+        });
+      }
+    });
+
+    // Sort each category and combine
+    const combinedGaps = [
+      ...neverTested.slice(0, Math.floor(parseInt(limit) / 2)),
+      ...gaps,
+      ...stale
+    ].slice(0, parseInt(limit));
+
+    res.json({
+      summary: {
+        total_techniques: data.techniques.length,
+        never_tested: neverTested.length,
+        detection_gaps: gaps.length,
+        stale_tests: stale.length
+      },
+      gap_count: combinedGaps.length,
+      gaps: combinedGaps
+    });
+
+  } catch (error) {
+    console.error('[ATT&CK] Error fetching gaps:', error);
+    res.status(500).json({
+      error: 'Failed to fetch technique gaps',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/attack/data-sources
+ * Returns all unique data sources from ATT&CK techniques
+ */
+router.get('/data-sources', async (req, res) => {
+  try {
+    const data = await getTechniques();
+
+    const dataSourcesMap = new Map();
+    data.techniques.forEach(t => {
+      t.data_sources.forEach(ds => {
+        const key = ds.toLowerCase();
+        if (!dataSourcesMap.has(key)) {
+          dataSourcesMap.set(key, { name: ds, count: 0 });
+        }
+        dataSourcesMap.get(key).count++;
+      });
+    });
+
+    const dataSources = Array.from(dataSourcesMap.values())
+      .sort((a, b) => b.count - a.count);
+
+    res.json({
+      total: dataSources.length,
+      data_sources: dataSources
+    });
+
+  } catch (error) {
+    console.error('[ATT&CK] Error fetching data sources:', error);
+    res.status(500).json({
+      error: 'Failed to fetch data sources',
+      message: error.message
     });
   }
 });
