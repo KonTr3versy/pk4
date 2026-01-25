@@ -203,7 +203,11 @@ export default function EngagementWizard({ onComplete, onCancel }) {
 
       onComplete?.(engagement);
     } catch (err) {
-      setError(err.message || 'Failed to create engagement');
+      if (err?.message && err.message.includes('Failed to add technique')) {
+        setError(err.message);
+      } else {
+        setError(err.message || 'Failed to create engagement');
+      }
       setLoading(false);
     }
   }

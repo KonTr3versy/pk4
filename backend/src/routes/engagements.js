@@ -96,6 +96,36 @@ router.post('/', async (req, res) => {
       });
     }
     
+    const columns = ['name', 'description', 'methodology'];
+    const values = [name.trim(), description?.trim() || null, methodology || 'atomic'];
+
+    if (metadataColumns.has('start_date')) {
+      columns.push('start_date');
+      values.push(start_date || null);
+    }
+
+    if (metadataColumns.has('end_date')) {
+      columns.push('end_date');
+      values.push(end_date || null);
+    }
+
+    if (metadataColumns.has('red_team_lead')) {
+      columns.push('red_team_lead');
+      values.push(red_team_lead || null);
+    }
+
+    if (metadataColumns.has('blue_team_lead')) {
+      columns.push('blue_team_lead');
+      values.push(blue_team_lead || null);
+    }
+
+    if (metadataColumns.has('visibility_mode')) {
+      columns.push('visibility_mode');
+      values.push(visibility_mode || 'open');
+    }
+
+    const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
+
     const result = await db.query(
       `INSERT INTO engagements
        (name, description, methodology, start_date, end_date, red_team_lead, blue_team_lead, visibility_mode)
