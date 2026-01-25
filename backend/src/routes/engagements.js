@@ -65,7 +65,17 @@ router.get('/', async (req, res) => {
 // Creates a new engagement
 router.post('/', async (req, res) => {
   try {
-    const { name, description, methodology } = req.body;
+    const {
+      name,
+      description,
+      methodology,
+      start_date,
+      end_date,
+      red_team_lead,
+      blue_team_lead,
+      visibility_mode
+    } = req.body;
+    const validVisibilityModes = ['open', 'blind_blue', 'blind_red'];
     
     // Validate required fields
     if (!name || !name.trim()) {
@@ -79,12 +89,28 @@ router.post('/', async (req, res) => {
         error: `Methodology must be one of: ${validMethodologies.join(', ')}` 
       });
     }
+
+    if (visibility_mode && !validVisibilityModes.includes(visibility_mode)) {
+      return res.status(400).json({
+        error: `Visibility mode must be one of: ${validVisibilityModes.join(', ')}`
+      });
+    }
     
     const result = await db.query(
-      `INSERT INTO engagements (name, description, methodology)
-       VALUES ($1, $2, $3)
+      `INSERT INTO engagements
+       (name, description, methodology, start_date, end_date, red_team_lead, blue_team_lead, visibility_mode)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [name.trim(), description?.trim() || null, methodology || 'atomic']
+      [
+        name.trim(),
+        description?.trim() || null,
+        methodology || 'atomic',
+        start_date || null,
+        end_date || null,
+        red_team_lead || null,
+        blue_team_lead || null,
+        visibility_mode || 'open'
+      ]
     );
     
     res.status(201).json(result.rows[0]);
