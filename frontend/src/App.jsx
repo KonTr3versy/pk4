@@ -10,11 +10,11 @@ import {
   Shield, Plus, ChevronRight, CheckCircle, AlertTriangle, XCircle, Eye,
   Zap, Network, BarChart3, Download, Trash2, Edit3, Save, X,
   GripVertical, Target, Monitor, Loader2, RefreshCw, LogOut, User, Lock,
-  Clipboard, PlayCircle
+  Clipboard, PlayCircle, Settings
 } from 'lucide-react';
 
 import * as api from './api/client';
-import { EngagementWizard, ExecutionBoard, PreExecutionChecklist } from './components/planning';
+import { EngagementWizard, ExecutionBoard, PreExecutionChecklist, PlanningWorkflow } from './components/planning';
 
 // =============================================================================
 // CONSTANTS
@@ -331,6 +331,7 @@ export default function App() {
             <NavButton active={currentView === 'engagements' || currentView === 'engagement-detail'} onClick={() => setCurrentView('engagements')} icon={Target} label="Engagements" />
             {selectedEngagement && (
               <>
+                <NavButton active={currentView === 'planning'} onClick={() => setCurrentView('planning')} icon={Settings} label="Planning" />
                 <NavButton active={currentView === 'kanban'} onClick={() => setCurrentView('kanban')} icon={GripVertical} label="Kanban" />
                 <NavButton active={currentView === 'board'} onClick={() => setCurrentView('board')} icon={PlayCircle} label="Board" />
               </>
@@ -369,6 +370,9 @@ export default function App() {
             )}
             {currentView === 'board' && selectedEngagement && (
               <ExecutionBoard engagementId={selectedEngagement.id} onEditTechnique={setEditingTechnique} onBack={() => setCurrentView('engagement-detail')} />
+            )}
+            {currentView === 'planning' && selectedEngagement && (
+              <PlanningWorkflow engagement={selectedEngagement} onBack={() => setCurrentView('engagement-detail')} onUpdate={() => loadEngagement(selectedEngagement.id)} />
             )}
           </>
         )}
