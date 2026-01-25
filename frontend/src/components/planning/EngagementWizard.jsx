@@ -80,10 +80,54 @@ export default function EngagementWizard({ onComplete, onCancel }) {
     });
   }
 
-  function handleAddTechniquesFromIds(techniqueIds) {
-    // This would need to fetch technique details from the ATT&CK API
-    // For now, we'll just store the IDs and fetch details on create
-    console.log('Adding techniques from IDs:', techniqueIds);
+  async function resolveTechniqueDetails(techniqueIds) {
+    if (!techniqueIds || techniqueIds.length === 0) {
+      return [];
+    }
+
+    const uniqueIds = Array.from(new Set(techniqueIds.map(id => id.trim()))).filter(Boolean);
+    const results = await Promise.all(
+      uniqueIds.map(async (id) => {
+        try {
+          const technique = await api.getAttackTechnique(id);
+          return {
+            technique_id: technique.technique_id,
+            technique_name: technique.technique_name,
+            tactics: technique.tactics || [],
+            description: technique.description || ''
+          };
+        } catch (err) {
+          console.error(`Failed to fetch technique ${id}:`, err);
+          return null;
+        }
+      })
+    );
+
+    return results.filter(Boolean);
+  }
+
+  async function handleAddTechniquesFromIds(techniqueIds) {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const techniques = await resolveTechniqueDetails(techniqueIds);
+      setFormData(prev => ({
+        ...prev,
+        techniques: [
+          ...prev.techniques,
+          ...techniques.filter(
+            technique => !prev.techniques.some(
+              existing => existing.technique_id === technique.technique_id
+            )
+          )
+        ]
+      }));
+    } catch (err) {
+      setError('Failed to load techniques from selection');
+    } finally {
+      setLoading(false);
+    }
   }
 
   function canProceed() {
@@ -181,7 +225,11 @@ export default function EngagementWizard({ onComplete, onCancel }) {
 
       onComplete?.(engagement);
     } catch (err) {
-      setError(err.message || 'Failed to create engagement');
+      if (err?.message && err.message.includes('Failed to add technique')) {
+        setError(err.message);
+      } else {
+        setError(err.message || 'Failed to create engagement');
+      }
       setLoading(false);
     }
   }
