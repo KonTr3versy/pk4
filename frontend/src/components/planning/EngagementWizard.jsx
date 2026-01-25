@@ -80,10 +80,54 @@ export default function EngagementWizard({ onComplete, onCancel }) {
     });
   }
 
-  function handleAddTechniquesFromIds(techniqueIds) {
-    // This would need to fetch technique details from the ATT&CK API
-    // For now, we'll just store the IDs and fetch details on create
-    console.log('Adding techniques from IDs:', techniqueIds);
+  async function resolveTechniqueDetails(techniqueIds) {
+    if (!techniqueIds || techniqueIds.length === 0) {
+      return [];
+    }
+
+    const uniqueIds = Array.from(new Set(techniqueIds.map(id => id.trim()))).filter(Boolean);
+    const results = await Promise.all(
+      uniqueIds.map(async (id) => {
+        try {
+          const technique = await api.getAttackTechnique(id);
+          return {
+            technique_id: technique.technique_id,
+            technique_name: technique.technique_name,
+            tactics: technique.tactics || [],
+            description: technique.description || ''
+          };
+        } catch (err) {
+          console.error(`Failed to fetch technique ${id}:`, err);
+          return null;
+        }
+      })
+    );
+
+    return results.filter(Boolean);
+  }
+
+  async function handleAddTechniquesFromIds(techniqueIds) {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const techniques = await resolveTechniqueDetails(techniqueIds);
+      setFormData(prev => ({
+        ...prev,
+        techniques: [
+          ...prev.techniques,
+          ...techniques.filter(
+            technique => !prev.techniques.some(
+              existing => existing.technique_id === technique.technique_id
+            )
+          )
+        ]
+      }));
+    } catch (err) {
+      setError('Failed to load techniques from selection');
+    } finally {
+      setLoading(false);
+    }
   }
 
   function canProceed() {
@@ -134,19 +178,45 @@ export default function EngagementWizard({ onComplete, onCancel }) {
 
       const engagement = await api.createEngagement(engagementData);
 
-      // Add techniques if selected
-      for (const technique of formData.techniques) {
-        await api.addTechnique(engagement.id, {
-          technique_id: technique.technique_id,
-          technique_name: technique.technique_name,
-          tactic: technique.tactics?.[0] || technique.tactic || 'Unknown',
-          description: technique.description
-        });
+      let techniquesToAdd = [...formData.techniques];
+
+      if (formData.template?.technique_ids?.length) {
+        const templateTechniques = await resolveTechniqueDetails(formData.template.technique_ids);
+        techniquesToAdd = [
+          ...techniquesToAdd,
+          ...templateTechniques.filter(
+            technique => !techniquesToAdd.some(
+              existing => existing.technique_id === technique.technique_id
+            )
+          )
+        ];
+      }
+
+      try {
+        for (const technique of techniquesToAdd) {
+          await api.addTechnique(engagement.id, {
+            technique_id: technique.technique_id,
+            technique_name: technique.technique_name,
+            tactic: technique.tactics?.[0] || technique.tactic || 'Unknown',
+            description: technique.description
+          });
+        }
+      } catch (err) {
+        try {
+          await api.deleteEngagement(engagement.id);
+        } catch (cleanupError) {
+          console.error('Failed to roll back engagement after technique error:', cleanupError);
+        }
+        throw new Error('Failed to add technique. Engagement creation was rolled back.');
       }
 
       onComplete?.(engagement);
     } catch (err) {
-      setError(err.message || 'Failed to create engagement');
+      if (err?.message && err.message.includes('Failed to add technique')) {
+        setError(err.message);
+      } else {
+        setError(err.message || 'Failed to create engagement');
+      }
       setLoading(false);
     }
   }
