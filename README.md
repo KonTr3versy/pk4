@@ -8,9 +8,11 @@ PurpleKit serves as a coordination layer for purple team exercises - it's not an
 
 - **Engagement Management** - Create and manage purple team exercises with clear scope, objectives, and timelines
 - **ATT&CK Integration** - Map techniques to MITRE ATT&CK framework with tactic categorization
-- **Detection Tracking** - Track four detection states: Detected, Partially Detected, Not Detected, Not Applicable
-- **Kanban Workflow** - Visual board to move techniques through Planning → Executing → Complete
+- **Detection Tracking** - Track outcomes: Logged, Alerted, Prevented, or Not Logged
+- **Kanban Workflow** - Visual board to move techniques through Ready → Blocked → Executing → Validating → Done
+- **Planning Wizard** - Guided engagement creation with templates, technique picker, and team leads
 - **Security Controls** - Attribute detections to specific security controls (EDR, SIEM, NDR, etc.)
+- **Comments & Checklist** - Technique comments and pre-execution checklist support
 - **Export & Reporting** - Export to JSON, CSV, and ATT&CK Navigator format for heatmaps
 
 ## Screenshots
@@ -48,19 +50,18 @@ PurpleKit serves as a coordination layer for purple team exercises - it's not an
 | Layer | Technology | Why |
 |-------|------------|-----|
 | Frontend | React + Tailwind CSS | Modern, component-based UI |
-| Backend | Node.js + Express | Same language as frontend, great ecosystem |
-| Database | PostgreSQL | Robust, free, works great with AWS RDS |
+| Backend | Node.js + Express | Fast API server |
+| Database | PostgreSQL | Reliable relational storage |
+| ATT&CK Source | MITRE TAXII 2.1 | Live technique/tactic data with caching |
 | Containerization | Docker | Consistent environment everywhere |
-| Deployment | AWS EC2 + RDS | Reliable, industry-standard |
 
 ## Project Structure
 
 ```
-purplekit-app/
+pk4/
 ├── frontend/                 # React application
 │   ├── src/
 │   │   ├── components/       # Reusable UI components
-│   │   ├── pages/            # Page-level components
 │   │   ├── api/              # API client functions
 │   │   ├── App.jsx           # Main app component
 │   │   └── index.jsx         # Entry point
@@ -93,7 +94,7 @@ purplekit-app/
 
 1. **Clone and enter the project**
    ```bash
-   cd purplekit-app
+   cd pk4
    ```
 
 2. **Copy environment file**
@@ -113,7 +114,6 @@ purplekit-app/
 
 That's it! Docker Compose will:
 - Start a PostgreSQL database
-- Run database migrations
 - Start the backend API
 - Build and serve the frontend
 
@@ -192,11 +192,36 @@ docker-compose exec db psql -U purplekit  # Database shell
 | DELETE | `/api/engagements/:id` | Delete engagement |
 | GET | `/api/engagements/:id/techniques` | List techniques in engagement |
 | POST | `/api/engagements/:id/techniques` | Add technique to engagement |
+| GET | `/api/engagements/:id/board` | Get kanban board data |
+| PATCH | `/api/engagements/:id/techniques/:techniqueId/status` | Update technique status/assignment |
+| PATCH | `/api/engagements/:id/techniques/reorder` | Reorder techniques |
 | PUT | `/api/techniques/:id` | Update technique |
 | DELETE | `/api/techniques/:id` | Remove technique |
+| GET | `/api/engagements/:id/techniques/:techniqueId/comments` | List technique comments |
+| POST | `/api/engagements/:id/techniques/:techniqueId/comments` | Add technique comment |
+| DELETE | `/api/engagements/:id/techniques/:techniqueId/comments/:commentId` | Delete technique comment |
+| GET | `/api/engagements/:id/checklist` | Get pre-execution checklist |
+| PATCH | `/api/engagements/:id/checklist/:itemKey` | Toggle checklist item |
+| POST | `/api/engagements/:id/checklist` | Add checklist item |
 | GET | `/api/export/:id/json` | Export engagement as JSON |
 | GET | `/api/export/:id/csv` | Export engagement as CSV |
 | GET | `/api/export/:id/navigator` | Export as ATT&CK Navigator layer |
+
+### ATT&CK Library
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/attack/techniques` | List cached techniques |
+| GET | `/api/attack/tactics` | List tactics |
+| GET | `/api/attack/search` | Search techniques |
+| GET | `/api/attack/gaps` | Gap analysis |
+
+### Templates
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/templates` | List templates |
+| POST | `/api/templates` | Create template |
+| GET | `/api/templates/:id` | Get template |
+| POST | `/api/templates/:id/apply` | Apply template to engagement |
 
 ## Environment Variables
 

@@ -54,6 +54,23 @@ router.put('/:id', async (req, res) => {
       remediated_at,
       outcomes // Array of { outcome_type, control_id, control_name, notes, alert_id, rule_name }
     } = req.body;
+    const validStatuses = ['ready', 'planned', 'blocked', 'executing', 'validating', 'complete', 'done'];
+    const validOutcomes = ['logged', 'alerted', 'prevented', 'not_logged'];
+
+    if (status !== undefined && !validStatuses.includes(status)) {
+      return res.status(400).json({
+        error: `status must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+
+    if (outcomes !== undefined) {
+      const invalidOutcome = outcomes.find(outcome => !validOutcomes.includes(outcome.outcome_type));
+      if (invalidOutcome) {
+        return res.status(400).json({
+          error: `outcome_type must be one of: ${validOutcomes.join(', ')}`
+        });
+      }
+    }
     
     // Start a transaction
     await client.query('BEGIN');
