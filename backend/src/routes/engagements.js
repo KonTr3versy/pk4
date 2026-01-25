@@ -25,7 +25,7 @@ router.get('/', async (req, res) => {
       SELECT 
         e.*,
         COUNT(t.id) as technique_count,
-        COUNT(CASE WHEN t.status = 'complete' THEN 1 END) as completed_count
+        COUNT(CASE WHEN t.status IN ('complete', 'done') THEN 1 END) as completed_count
       FROM engagements e
       LEFT JOIN techniques t ON e.id = t.engagement_id
       GROUP BY e.id
@@ -139,6 +139,20 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, methodology, status } = req.body;
+    const validMethodologies = ['atomic', 'scenario'];
+    const validStatuses = ['active', 'completed', 'archived'];
+
+    if (methodology !== undefined && !validMethodologies.includes(methodology)) {
+      return res.status(400).json({
+        error: `Methodology must be one of: ${validMethodologies.join(', ')}`
+      });
+    }
+
+    if (status !== undefined && !validStatuses.includes(status)) {
+      return res.status(400).json({
+        error: `Status must be one of: ${validStatuses.join(', ')}`
+      });
+    }
     
     // Build dynamic update query
     const updates = [];
