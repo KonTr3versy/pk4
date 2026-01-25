@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   ChevronRight, ChevronLeft, Zap, Network, Check, Plus,
-  Target, Clock, Calendar, Users, Eye, EyeOff, Loader2
+  Target, Calendar, Users, Eye, EyeOff, Loader2
 } from 'lucide-react';
 import * as api from '../../api/client';
 import TechniquePicker from './TechniquePicker';
@@ -61,10 +61,10 @@ export default function EngagementWizard({ onComplete, onCancel }) {
   }
 
   function handleTemplateSelect(template) {
+    // Keep existing manual selections, just update template and methodology
     updateFormData({
       template,
-      methodology: template.methodology,
-      techniques: [] // Will be populated from template
+      methodology: template.methodology
     });
   }
 
@@ -134,14 +134,49 @@ export default function EngagementWizard({ onComplete, onCancel }) {
 
       const engagement = await api.createEngagement(engagementData);
 
-      // Add techniques if selected
+      // Track added technique IDs to prevent duplicates
+      const addedTechniqueIds = new Set();
+
+      // Add manually selected techniques
       for (const technique of formData.techniques) {
-        await api.addTechnique(engagement.id, {
-          technique_id: technique.technique_id,
-          technique_name: technique.technique_name,
-          tactic: technique.tactics?.[0] || technique.tactic || 'Unknown',
-          description: technique.description
-        });
+        if (!addedTechniqueIds.has(technique.technique_id)) {
+          await api.addTechnique(engagement.id, {
+            technique_id: technique.technique_id,
+            technique_name: technique.technique_name,
+            tactic: technique.tactics?.[0] || technique.tactic || 'Unknown',
+            description: technique.description
+          });
+          addedTechniqueIds.add(technique.technique_id);
+        }
+      }
+
+      // Add techniques from template if selected
+      if (formData.template?.technique_ids?.length > 0) {
+        // Fetch technique details from the attack API
+        try {
+          const attackTechniques = await api.getAttackTechniques();
+          const techniqueMap = new Map(
+            attackTechniques.map(t => [t.technique_id, t])
+          );
+
+          for (const techniqueId of formData.template.technique_ids) {
+            if (!addedTechniqueIds.has(techniqueId)) {
+              const technique = techniqueMap.get(techniqueId);
+              if (technique) {
+                await api.addTechnique(engagement.id, {
+                  technique_id: technique.technique_id,
+                  technique_name: technique.technique_name,
+                  tactic: technique.tactics?.[0] || 'Unknown',
+                  description: technique.description
+                });
+                addedTechniqueIds.add(techniqueId);
+              }
+            }
+          }
+        } catch (templateErr) {
+          console.error('Failed to load some template techniques:', templateErr);
+          // Continue anyway - engagement was created successfully
+        }
       }
 
       onComplete?.(engagement);
