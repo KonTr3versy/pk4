@@ -9,6 +9,9 @@
  * - DELETE /api/engagements/:id - Delete an engagement
  * - GET /api/engagements/:id/techniques - Get techniques for an engagement
  * - POST /api/engagements/:id/techniques - Add a technique to an engagement
+ * - POST /api/engagements/:id/techniques/bulk - Add multiple techniques at once
+ * - GET /api/engagements/:id/techniques/suggested - Suggested techniques
+ * - POST /api/engagements/:id/duplicate - Duplicate an engagement
  */
 
 const express = require('express');
@@ -73,7 +76,12 @@ router.post('/', async (req, res) => {
       end_date,
       red_team_lead,
       blue_team_lead,
-      visibility_mode
+      visibility_mode,
+      template_id,
+      last_used_template_id,
+      plan_notes,
+      objectives,
+      control_attributions
     } = req.body;
     const validVisibilityModes = ['open', 'blind_blue', 'blind_red'];
     
@@ -96,40 +104,10 @@ router.post('/', async (req, res) => {
       });
     }
     
-    const columns = ['name', 'description', 'methodology'];
-    const values = [name.trim(), description?.trim() || null, methodology || 'atomic'];
-
-    if (metadataColumns.has('start_date')) {
-      columns.push('start_date');
-      values.push(start_date || null);
-    }
-
-    if (metadataColumns.has('end_date')) {
-      columns.push('end_date');
-      values.push(end_date || null);
-    }
-
-    if (metadataColumns.has('red_team_lead')) {
-      columns.push('red_team_lead');
-      values.push(red_team_lead || null);
-    }
-
-    if (metadataColumns.has('blue_team_lead')) {
-      columns.push('blue_team_lead');
-      values.push(blue_team_lead || null);
-    }
-
-    if (metadataColumns.has('visibility_mode')) {
-      columns.push('visibility_mode');
-      values.push(visibility_mode || 'open');
-    }
-
-    const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
-
     const result = await db.query(
       `INSERT INTO engagements
-       (name, description, methodology, start_date, end_date, red_team_lead, blue_team_lead, visibility_mode)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       (name, description, methodology, start_date, end_date, red_team_lead, blue_team_lead, visibility_mode, template_id, last_used_template_id, plan_notes, objectives, control_attributions)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [
         name.trim(),
@@ -139,7 +117,12 @@ router.post('/', async (req, res) => {
         end_date || null,
         red_team_lead || null,
         blue_team_lead || null,
-        visibility_mode || 'open'
+        visibility_mode || 'open',
+        template_id || null,
+        last_used_template_id || template_id || null,
+        plan_notes?.trim() || null,
+        objectives?.trim() || null,
+        Array.isArray(control_attributions) ? control_attributions : null
       ]
     );
     
@@ -214,7 +197,7 @@ router.get('/:id', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, methodology, status } = req.body;
+    const { name, description, methodology, status, template_id, last_used_template_id, plan_notes, objectives, control_attributions } = req.body;
     const validMethodologies = ['atomic', 'scenario'];
     const validStatuses = ['active', 'completed', 'archived'];
 
@@ -250,6 +233,26 @@ router.put('/:id', async (req, res) => {
     if (status !== undefined) {
       updates.push(`status = $${paramCount++}`);
       values.push(status);
+    }
+    if (template_id !== undefined) {
+      updates.push(`template_id = $${paramCount++}`);
+      values.push(template_id || null);
+    }
+    if (last_used_template_id !== undefined) {
+      updates.push(`last_used_template_id = $${paramCount++}`);
+      values.push(last_used_template_id || null);
+    }
+    if (plan_notes !== undefined) {
+      updates.push(`plan_notes = $${paramCount++}`);
+      values.push(plan_notes?.trim() || null);
+    }
+    if (objectives !== undefined) {
+      updates.push(`objectives = $${paramCount++}`);
+      values.push(objectives?.trim() || null);
+    }
+    if (control_attributions !== undefined) {
+      updates.push(`control_attributions = $${paramCount++}`);
+      values.push(Array.isArray(control_attributions) ? control_attributions : null);
     }
     
     if (updates.length === 0) {
@@ -358,7 +361,7 @@ router.get('/:id/techniques', async (req, res) => {
 router.post('/:id/techniques', async (req, res) => {
   try {
     const { id } = req.params;
-    const { technique_id, technique_name, tactic, description } = req.body;
+    const { technique_id, technique_name, tactic, description, source } = req.body;
     const supportsPosition = await checkTechniquePositionColumn();
 
     // Validate required fields
@@ -403,13 +406,327 @@ router.post('/:id/techniques', async (req, res) => {
     }
 
     // Return with empty outcomes array for consistency
+    const createdTechnique = result.rows[0];
+
+    // Track usage for recents/suggestions
+    await db.query(
+      `INSERT INTO technique_usage (technique_id, engagement_id, source)
+       VALUES ($1, $2, $3)`,
+      [createdTechnique.technique_id, id, source || 'manual']
+    );
+
     res.status(201).json({
-      ...result.rows[0],
+      ...createdTechnique,
       outcomes: []
     });
   } catch (error) {
     console.error('Error adding technique:', error);
     res.status(500).json({ error: 'Failed to add technique' });
+  }
+});
+
+// =============================================================================
+// POST /api/engagements/:id/techniques/bulk
+// =============================================================================
+// Adds multiple techniques to an engagement in one request
+router.post('/:id/techniques/bulk', async (req, res) => {
+  const client = await db.getClient();
+
+  try {
+    const { id } = req.params;
+    const { techniques, source } = req.body;
+    const supportsPosition = await checkTechniquePositionColumn();
+
+    if (!Array.isArray(techniques) || techniques.length === 0) {
+      return res.status(400).json({ error: 'techniques array is required' });
+    }
+
+    // Verify engagement exists
+    const engagementCheck = await client.query(
+      'SELECT id FROM engagements WHERE id = $1',
+      [id]
+    );
+
+    if (engagementCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Engagement not found' });
+    }
+
+    await client.query('BEGIN');
+
+    // Avoid duplicates
+    const incomingIds = techniques.map(t => t.technique_id).filter(Boolean);
+    const existingResult = await client.query(
+      'SELECT technique_id FROM techniques WHERE engagement_id = $1 AND technique_id = ANY($2)',
+      [id, incomingIds]
+    );
+    const existingIds = new Set(existingResult.rows.map(row => row.technique_id));
+
+    let nextPosition = 0;
+    if (supportsPosition) {
+      const posResult = await client.query(
+        'SELECT COALESCE(MAX(position), 0) as max_pos FROM techniques WHERE engagement_id = $1',
+        [id]
+      );
+      nextPosition = posResult.rows[0]?.max_pos || 0;
+    }
+
+    const created = [];
+
+    for (const technique of techniques) {
+      if (!technique?.technique_id || !technique?.technique_name || !technique?.tactic) {
+        continue;
+      }
+
+      if (existingIds.has(technique.technique_id)) {
+        continue;
+      }
+
+      let insertResult;
+      if (supportsPosition) {
+        nextPosition += 1;
+        insertResult = await client.query(
+          `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status, position)
+           VALUES ($1, $2, $3, $4, $5, 'ready', $6)
+           RETURNING *`,
+          [id, technique.technique_id, technique.technique_name, technique.tactic, technique.description || null, nextPosition]
+        );
+      } else {
+        insertResult = await client.query(
+          `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status)
+           VALUES ($1, $2, $3, $4, $5, 'ready')
+           RETURNING *`,
+          [id, technique.technique_id, technique.technique_name, technique.tactic, technique.description || null]
+        );
+      }
+
+      const createdTechnique = insertResult.rows[0];
+
+      await client.query(
+        `INSERT INTO technique_usage (technique_id, engagement_id, source)
+         VALUES ($1, $2, $3)`,
+        [createdTechnique.technique_id, id, technique.source || source || 'manual']
+      );
+
+      created.push({ ...createdTechnique, outcomes: [] });
+      existingIds.add(createdTechnique.technique_id);
+    }
+
+    await client.query('COMMIT');
+
+    res.status(201).json({
+      added_count: created.length,
+      techniques: created
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error bulk adding techniques:', error);
+    res.status(500).json({ error: 'Failed to bulk add techniques' });
+  } finally {
+    client.release();
+  }
+});
+
+// =============================================================================
+// GET /api/engagements/:id/techniques/suggested
+// =============================================================================
+// Returns suggested techniques based on usage and template defaults
+router.get('/:id/techniques/suggested', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = 10, template_id } = req.query;
+
+    // Verify engagement exists
+    const engagementResult = await db.query(
+      'SELECT id, template_id FROM engagements WHERE id = $1',
+      [id]
+    );
+
+    if (engagementResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Engagement not found' });
+    }
+
+    const engagement = engagementResult.rows[0];
+    const activeTemplateId = template_id || engagement.template_id;
+
+    // Existing techniques for engagement
+    const existingResult = await db.query(
+      'SELECT technique_id FROM techniques WHERE engagement_id = $1',
+      [id]
+    );
+    const existing = new Set(existingResult.rows.map(row => row.technique_id));
+
+    const candidateScores = new Map();
+
+    function addCandidate(techniqueId, weight, reason) {
+      if (!techniqueId || existing.has(techniqueId)) return;
+      const current = candidateScores.get(techniqueId) || { score: 0, reasons: new Set() };
+      current.score += weight;
+      current.reasons.add(reason);
+      candidateScores.set(techniqueId, current);
+    }
+
+    if (activeTemplateId) {
+      const templateResult = await db.query(
+        'SELECT technique_ids FROM engagement_templates WHERE id = $1',
+        [activeTemplateId]
+      );
+      const templateTechniques = templateResult.rows[0]?.technique_ids || [];
+      templateTechniques.forEach(id => addCandidate(id, 100, 'template'));
+    }
+
+    const recentResult = await db.query(
+      `SELECT technique_id, MAX(used_at) as last_used
+       FROM technique_usage
+       GROUP BY technique_id
+       ORDER BY last_used DESC
+       LIMIT 50`
+    );
+    recentResult.rows.forEach(row => addCandidate(row.technique_id, 50, 'recent'));
+
+    const popularResult = await db.query(
+      `SELECT technique_id, COUNT(*) as use_count
+       FROM technique_usage
+       GROUP BY technique_id
+       ORDER BY use_count DESC
+       LIMIT 50`
+    );
+    popularResult.rows.forEach(row => addCandidate(row.technique_id, 25, 'popular'));
+
+    const candidateIds = Array.from(candidateScores.keys());
+    if (candidateIds.length === 0) {
+      return res.json({ suggestions: [] });
+    }
+
+    const detailResult = await db.query(
+      `
+        SELECT
+          c.technique_id,
+          COALESCE(t.technique_name, a.technique_name) as technique_name,
+          COALESCE(t.tactic, a.tactic) as tactic,
+          COALESCE(t.description, a.description) as description
+        FROM UNNEST($1::text[]) as c(technique_id)
+        LEFT JOIN (
+          SELECT DISTINCT ON (technique_id) technique_id, technique_name, tactic, description
+          FROM techniques
+          ORDER BY technique_id, created_at DESC
+        ) t ON t.technique_id = c.technique_id
+        LEFT JOIN attack_library a ON a.technique_id = c.technique_id
+      `,
+      [candidateIds]
+    );
+
+    const detailsMap = new Map(detailResult.rows.map(row => [row.technique_id, row]));
+
+    const suggestions = candidateIds
+      .map(id => {
+        const detail = detailsMap.get(id) || { technique_id: id };
+        const meta = candidateScores.get(id);
+        return {
+          ...detail,
+          score: meta.score,
+          reasons: Array.from(meta.reasons)
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, parseInt(limit));
+
+    res.json({ suggestions });
+  } catch (error) {
+    console.error('Error fetching suggested techniques:', error);
+    res.status(500).json({ error: 'Failed to fetch suggested techniques' });
+  }
+});
+
+// =============================================================================
+// POST /api/engagements/:id/duplicate
+// =============================================================================
+// Duplicates an engagement with its techniques
+router.post('/:id/duplicate', async (req, res) => {
+  const client = await db.getClient();
+
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+
+    await client.query('BEGIN');
+
+    const engagementResult = await client.query(
+      'SELECT * FROM engagements WHERE id = $1',
+      [id]
+    );
+
+    if (engagementResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Engagement not found' });
+    }
+
+    const engagement = engagementResult.rows[0];
+    const newName = name?.trim() || `${engagement.name} (Copy)`;
+
+    const insertResult = await client.query(
+      `INSERT INTO engagements
+       (name, description, methodology, start_date, end_date, red_team_lead, blue_team_lead, visibility_mode, template_id, last_used_template_id, plan_notes, objectives, control_attributions, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'draft')
+       RETURNING *`,
+      [
+        newName,
+        engagement.description,
+        engagement.methodology,
+        engagement.start_date,
+        engagement.end_date,
+        engagement.red_team_lead,
+        engagement.blue_team_lead,
+        engagement.visibility_mode || 'open',
+        engagement.template_id,
+        engagement.template_id,
+        engagement.plan_notes,
+        engagement.objectives,
+        engagement.control_attributions
+      ]
+    );
+
+    const newEngagement = insertResult.rows[0];
+
+    const techniquesResult = await client.query(
+      'SELECT technique_id, technique_name, tactic, description FROM techniques WHERE engagement_id = $1',
+      [id]
+    );
+
+    const supportsPosition = await checkTechniquePositionColumn();
+    let position = 0;
+
+    for (const technique of techniquesResult.rows) {
+      if (supportsPosition) {
+        position += 1;
+        await client.query(
+          `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status, position)
+           VALUES ($1, $2, $3, $4, $5, 'ready', $6)`,
+          [newEngagement.id, technique.technique_id, technique.technique_name, technique.tactic, technique.description, position]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status)
+           VALUES ($1, $2, $3, $4, $5, 'ready')`,
+          [newEngagement.id, technique.technique_id, technique.technique_name, technique.tactic, technique.description]
+        );
+      }
+
+      await client.query(
+        `INSERT INTO technique_usage (technique_id, engagement_id, source)
+         VALUES ($1, $2, 'duplicate')`,
+        [technique.technique_id, newEngagement.id]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    res.status(201).json(newEngagement);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error duplicating engagement:', error);
+    res.status(500).json({ error: 'Failed to duplicate engagement' });
+  } finally {
+    client.release();
   }
 });
 

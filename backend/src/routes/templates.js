@@ -92,7 +92,7 @@ router.get('/:id', async (req, res) => {
 // Creates a new template
 router.post('/', async (req, res) => {
   try {
-    const { name, description, methodology, technique_ids, estimated_duration_hours, is_public } = req.body;
+    const { name, description, methodology, technique_ids, estimated_duration_hours, is_public, default_objectives, default_controls } = req.body;
     const userId = req.user?.id;
 
     if (!name || !name.trim()) {
@@ -108,14 +108,16 @@ router.post('/', async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO engagement_templates
-       (name, description, methodology, technique_ids, estimated_duration_hours, is_public, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (name, description, methodology, technique_ids, default_objectives, default_controls, estimated_duration_hours, is_public, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
       [
         name.trim(),
         description?.trim() || null,
         methodology,
         technique_ids || [],
+        default_objectives?.trim() || null,
+        Array.isArray(default_controls) ? default_controls : [],
         estimated_duration_hours || null,
         isPublic,
         userId
@@ -136,7 +138,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, methodology, technique_ids, estimated_duration_hours, is_public } = req.body;
+    const { name, description, methodology, technique_ids, estimated_duration_hours, is_public, default_objectives, default_controls } = req.body;
     const userId = req.user?.id;
     const isAdmin = req.user?.role === 'admin';
 
@@ -177,6 +179,14 @@ router.put('/:id', async (req, res) => {
     if (technique_ids !== undefined) {
       updates.push(`technique_ids = $${paramCount++}`);
       values.push(technique_ids);
+    }
+    if (default_objectives !== undefined) {
+      updates.push(`default_objectives = $${paramCount++}`);
+      values.push(default_objectives?.trim() || null);
+    }
+    if (default_controls !== undefined) {
+      updates.push(`default_controls = $${paramCount++}`);
+      values.push(Array.isArray(default_controls) ? default_controls : []);
     }
     if (estimated_duration_hours !== undefined) {
       updates.push(`estimated_duration_hours = $${paramCount++}`);
