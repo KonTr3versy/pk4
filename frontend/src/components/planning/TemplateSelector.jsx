@@ -134,6 +134,27 @@ function TemplateCard({ template, isSelected, onSelect }) {
             <p className="text-xs text-gray-400 mt-2 line-clamp-2">{template.description}</p>
           )}
 
+          {template.default_objectives && (
+            <p className="text-xs text-gray-500 mt-2 line-clamp-2">
+              Objectives: {template.default_objectives}
+            </p>
+          )}
+
+          {(template.default_controls || []).length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {template.default_controls.slice(0, 4).map(control => (
+                <span key={control} className="px-1.5 py-0.5 bg-gray-700 rounded text-[10px] text-gray-300">
+                  {control}
+                </span>
+              ))}
+              {template.default_controls.length > 4 && (
+                <span className="px-1.5 py-0.5 bg-gray-700 rounded text-[10px] text-gray-400">
+                  +{template.default_controls.length - 4}
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center gap-3 mt-3 text-xs text-gray-500">
             <span className="flex items-center gap-1">
               <Target className="w-3 h-3" />

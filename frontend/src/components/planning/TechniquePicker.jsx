@@ -25,6 +25,8 @@ export default function TechniquePicker({
   const [tactics, setTactics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageTechniques, setUsageTechniques] = useState([]);
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState('');
@@ -34,11 +36,21 @@ export default function TechniquePicker({
   const [maxDuration, setMaxDuration] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [includeSubtechniques, setIncludeSubtechniques] = useState(true);
+  const [showRecent, setShowRecent] = useState(false);
+  const [showMostUsed, setShowMostUsed] = useState(false);
 
   // Load techniques
   useEffect(() => {
     loadTechniques();
   }, []);
+
+  useEffect(() => {
+    if (showRecent || showMostUsed) {
+      loadUsageTechniques();
+    } else {
+      setUsageTechniques([]);
+    }
+  }, [showRecent, showMostUsed, searchQuery, selectedTactics, selectedPlatforms]);
 
   async function loadTechniques() {
     setLoading(true);
@@ -76,6 +88,25 @@ export default function TechniquePicker({
       setError('Search failed');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadUsageTechniques() {
+    setUsageLoading(true);
+    try {
+      const data = await api.searchTechniques({
+        search: searchQuery || undefined,
+        tactic: selectedTactics.length === 1 ? selectedTactics[0] : undefined,
+        platform: selectedPlatforms.length === 1 ? selectedPlatforms[0] : undefined,
+        recent: showRecent,
+        mostUsed: showMostUsed,
+        limit: 100
+      });
+      setUsageTechniques(data.techniques || []);
+    } catch (err) {
+      console.error('Failed to load recent techniques', err);
+    } finally {
+      setUsageLoading(false);
     }
   }
 
@@ -121,6 +152,14 @@ export default function TechniquePicker({
     }
   }
 
+  function selectAllFiltered() {
+    filteredTechniques.forEach(technique => {
+      if (!isSelected(technique)) {
+        onSelect?.(technique);
+      }
+    });
+  }
+
   function clearFilters() {
     setSearchQuery('');
     setSelectedTactics([]);
@@ -131,6 +170,18 @@ export default function TechniquePicker({
 
   const hasActiveFilters = searchQuery || selectedTactics.length > 0 ||
     selectedPlatforms.length > 0 || selectedComplexity || maxDuration;
+
+  const filteredUsageTechniques = usageTechniques.filter(t => {
+    if (existingTechniqueIds.includes(t.technique_id)) return false;
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      if (!t.technique_id.toLowerCase().includes(query) &&
+          !(t.technique_name || '').toLowerCase().includes(query)) {
+        return false;
+      }
+    }
+    return true;
+  });
 
   return (
     <div className="flex flex-col h-full">
@@ -189,6 +240,29 @@ export default function TechniquePicker({
             title="Refresh techniques"
           >
             <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setShowRecent(!showRecent)}
+            className={`px-3 py-1.5 rounded-lg text-xs border ${
+              showRecent
+                ? 'border-purple-500 text-purple-300 bg-purple-500/10'
+                : 'border-gray-700 text-gray-400 hover:text-white'
+            }`}
+          >
+            Recently used
+          </button>
+          <button
+            onClick={() => setShowMostUsed(!showMostUsed)}
+            className={`px-3 py-1.5 rounded-lg text-xs border ${
+              showMostUsed
+                ? 'border-blue-500 text-blue-300 bg-blue-500/10'
+                : 'border-gray-700 text-gray-400 hover:text-white'
+            }`}
+          >
+            Most used
           </button>
         </div>
 
@@ -298,6 +372,29 @@ export default function TechniquePicker({
 
       {/* Results */}
       <div className="flex-1 overflow-auto">
+        {(showRecent || showMostUsed) && (
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-400">Suggested for you</span>
+              {usageLoading && <Loader2 className="w-4 h-4 animate-spin text-purple-500" />}
+            </div>
+            {filteredUsageTechniques.length === 0 ? (
+              <div className="text-xs text-gray-500 mb-2">No recent matches yet.</div>
+            ) : (
+              <div className="space-y-2">
+                {filteredUsageTechniques.slice(0, 8).map(technique => (
+                  <TechniqueCard
+                    key={`usage-${technique.technique_id}`}
+                    technique={technique}
+                    isSelected={isSelected(technique)}
+                    onToggle={() => toggleTechnique(technique)}
+                    usageLabel={showMostUsed ? `Used ${technique.use_count || 0}x` : 'Recent'}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {loading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
@@ -317,12 +414,22 @@ export default function TechniquePicker({
           </div>
         ) : (
           <div className="space-y-2">
-            <div className="text-xs text-gray-500 mb-2">
+            <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+              <div>
               {filteredTechniques.length} techniques found
               {selectedTechniques.length > 0 && (
                 <span className="ml-2 text-purple-400">
                   ({selectedTechniques.length} selected)
                 </span>
+              )}
+              </div>
+              {filteredTechniques.length > 0 && (
+                <button
+                  onClick={selectAllFiltered}
+                  className="text-xs text-purple-400 hover:text-purple-300"
+                >
+                  Select all results
+                </button>
               )}
             </div>
             {filteredTechniques.map(technique => (
@@ -339,7 +446,7 @@ export default function TechniquePicker({
 
       {/* Selection Summary */}
       {selectedTechniques.length > 0 && (
-        <div className="mt-4 pt-4 border-t border-gray-800">
+        <div className="mt-4 pt-4 border-t border-gray-800 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-400">
               {selectedTechniques.length} technique{selectedTechniques.length !== 1 ? 's' : ''} selected
@@ -351,13 +458,29 @@ export default function TechniquePicker({
               Clear selection
             </button>
           </div>
+          <div className="max-h-36 overflow-auto space-y-1">
+            {selectedTechniques.map(technique => (
+              <div key={`selected-${technique.technique_id}`} className="flex items-center justify-between text-xs bg-gray-800/60 rounded px-2 py-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-purple-400">{technique.technique_id}</span>
+                  <span className="text-gray-300">{technique.technique_name}</span>
+                </div>
+                <button
+                  onClick={() => onDeselect?.(technique)}
+                  className="text-gray-500 hover:text-red-400"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function TechniqueCard({ technique, isSelected, onToggle }) {
+function TechniqueCard({ technique, isSelected, onToggle, usageLabel }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -385,6 +508,11 @@ function TechniqueCard({ technique, isSelected, onToggle }) {
             <span className="font-mono text-xs text-purple-400">{technique.technique_id}</span>
             {technique.is_subtechnique && (
               <span className="px-1.5 py-0.5 bg-gray-700 rounded text-[10px] text-gray-400">Sub</span>
+            )}
+            {usageLabel && (
+              <span className="px-1.5 py-0.5 bg-gray-700 rounded text-[10px] text-gray-300">
+                {usageLabel}
+              </span>
             )}
           </div>
           <h4 className="font-medium text-sm mt-0.5">{technique.technique_name}</h4>

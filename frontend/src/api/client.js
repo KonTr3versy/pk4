@@ -147,6 +147,13 @@ export async function createEngagement(data) {
   });
 }
 
+export async function duplicateEngagement(engagementId, name) {
+  return apiRequest(`/engagements/${engagementId}/duplicate`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
 export async function updateEngagement(id, data) {
   return apiRequest(`/engagements/${id}`, {
     method: 'PUT',
@@ -175,6 +182,21 @@ export async function addTechnique(engagementId, data) {
   });
 }
 
+export async function addTechniquesBulk(engagementId, techniques, source) {
+  return apiRequest(`/engagements/${engagementId}/techniques/bulk`, {
+    method: 'POST',
+    body: JSON.stringify({ techniques, source }),
+  });
+}
+
+export async function getSuggestedTechniques(engagementId, options = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.append('limit', options.limit);
+  if (options.template_id) params.append('template_id', options.template_id);
+  const queryString = params.toString();
+  return apiRequest(`/engagements/${engagementId}/techniques/suggested${queryString ? `?${queryString}` : ''}`);
+}
+
 export async function updateTechnique(techniqueId, data) {
   return apiRequest(`/techniques/${techniqueId}`, {
     method: 'PUT',
@@ -194,6 +216,18 @@ export async function deleteTechnique(techniqueId) {
 
 export async function getSecurityControls() {
   return apiRequest('/techniques/controls');
+}
+
+export async function searchTechniques(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.search) params.append('search', filters.search);
+  if (filters.tactic) params.append('tactic', filters.tactic);
+  if (filters.platform) params.append('platform', filters.platform);
+  if (filters.recent) params.append('recent', 'true');
+  if (filters.mostUsed) params.append('most_used', 'true');
+  if (filters.limit) params.append('limit', filters.limit);
+  const queryString = params.toString();
+  return apiRequest(`/techniques/search${queryString ? `?${queryString}` : ''}`);
 }
 
 // =============================================================================

@@ -73,6 +73,8 @@ export default function App() {
   const [showAddTechniqueModal, setShowAddTechniqueModal] = useState(false);
   const [editingTechnique, setEditingTechnique] = useState(null);
   const [showChecklist, setShowChecklist] = useState(false);
+  const [showCreateTemplateModal, setShowCreateTemplateModal] = useState(false);
+  const [templateSourceEngagement, setTemplateSourceEngagement] = useState(null);
 
   useEffect(() => {
     checkAuth();
@@ -178,6 +180,22 @@ export default function App() {
     });
   }
 
+  async function handleDuplicateEngagement(id, name) {
+    try {
+      const duplicated = await api.duplicateEngagement(id, name);
+      setEngagements([duplicated, ...engagements]);
+      await loadEngagement(duplicated.id);
+      setCurrentView('engagement-detail');
+    } catch (err) {
+      setError('Failed to duplicate engagement');
+    }
+  }
+
+  async function handleDuplicateLatestEngagement() {
+    if (engagements.length === 0) return;
+    await handleDuplicateEngagement(engagements[0].id);
+  }
+
   async function handleDeleteEngagement(id) {
     if (!window.confirm('Delete this engagement?')) return;
     try {
@@ -233,6 +251,21 @@ export default function App() {
       });
     } catch (err) {
       setError('Failed to delete technique');
+    }
+  }
+
+  async function handleAddSuggestedTechnique(technique) {
+    if (!selectedEngagement) return;
+    try {
+      await api.addTechnique(selectedEngagement.id, {
+        technique_id: technique.technique_id,
+        technique_name: technique.technique_name || technique.technique_id,
+        tactic: technique.tactic || 'Unknown',
+        description: technique.description || ''
+      });
+      await loadEngagement(selectedEngagement.id);
+    } catch (err) {
+      setError('Failed to add suggested technique');
     }
   }
 
@@ -358,16 +391,52 @@ export default function App() {
         ) : (
           <>
             {currentView === 'dashboard' && (
-              <DashboardView stats={getStats()} engagements={engagements} onSelectEngagement={(e) => { loadEngagement(e.id).then(() => setCurrentView('engagement-detail')); }} onNew={() => setShowEngagementWizard(true)} onQuickNew={() => setShowNewEngagementForm(true)} />
+              <DashboardView
+                stats={getStats()}
+                engagements={engagements}
+                onSelectEngagement={(e) => { loadEngagement(e.id).then(() => setCurrentView('engagement-detail')); }}
+                onNew={() => setShowEngagementWizard(true)}
+                onQuickNew={() => setShowNewEngagementForm(true)}
+                onDuplicateLatest={handleDuplicateLatestEngagement}
+              />
             )}
             {currentView === 'engagements' && (
-              <EngagementsListView engagements={engagements} onSelect={(e) => { loadEngagement(e.id).then(() => setCurrentView('engagement-detail')); }} onDelete={handleDeleteEngagement} onNew={() => setShowEngagementWizard(true)} onQuickNew={() => setShowNewEngagementForm(true)} />
+              <EngagementsListView
+                engagements={engagements}
+                onSelect={(e) => { loadEngagement(e.id).then(() => setCurrentView('engagement-detail')); }}
+                onDelete={handleDeleteEngagement}
+                onNew={() => setShowEngagementWizard(true)}
+                onQuickNew={() => setShowNewEngagementForm(true)}
+                onDuplicate={handleDuplicateEngagement}
+              />
             )}
             {currentView === 'engagement-detail' && selectedEngagement && (
-              <EngagementDetailView engagement={selectedEngagement} onAddTechnique={() => setShowAddTechniqueModal(true)} onEditTechnique={setEditingTechnique} onDeleteTechnique={handleDeleteTechnique} onUpdateTechnique={handleUpdateTechnique} onExportJSON={handleExportJSON} onExportCSV={handleExportCSV} onExportNavigator={handleExportNavigator} onBack={() => setCurrentView('engagements')} onShowChecklist={() => setShowChecklist(true)} />
+              <EngagementDetailView
+                engagement={selectedEngagement}
+                onAddTechnique={() => setShowAddTechniqueModal(true)}
+                onEditTechnique={setEditingTechnique}
+                onDeleteTechnique={handleDeleteTechnique}
+                onUpdateTechnique={handleUpdateTechnique}
+                onExportJSON={handleExportJSON}
+                onExportCSV={handleExportCSV}
+                onExportNavigator={handleExportNavigator}
+                onBack={() => setCurrentView('engagements')}
+                onShowChecklist={() => setShowChecklist(true)}
+                onDuplicate={() => handleDuplicateEngagement(selectedEngagement.id)}
+                onCreateTemplate={() => {
+                  setTemplateSourceEngagement(selectedEngagement);
+                  setShowCreateTemplateModal(true);
+                }}
+              />
             )}
             {currentView === 'kanban' && selectedEngagement && (
-              <KanbanView engagement={selectedEngagement} onUpdateTechnique={handleUpdateTechnique} onEditTechnique={setEditingTechnique} onBack={() => setCurrentView('engagement-detail')} />
+              <KanbanView
+                engagement={selectedEngagement}
+                onUpdateTechnique={handleUpdateTechnique}
+                onEditTechnique={setEditingTechnique}
+                onBack={() => setCurrentView('engagement-detail')}
+                onAddSuggestedTechnique={handleAddSuggestedTechnique}
+              />
             )}
             {currentView === 'board' && selectedEngagement && (
               <ExecutionBoard engagementId={selectedEngagement.id} onEditTechnique={setEditingTechnique} onBack={() => setCurrentView('engagement-detail')} />
@@ -400,6 +469,26 @@ export default function App() {
       {editingTechnique && (
         <Modal title={editingTechnique.technique_name} subtitle={editingTechnique.technique_id} onClose={() => setEditingTechnique(null)}>
           <EditTechniqueForm technique={editingTechnique} securityControls={securityControls} onSave={(updates) => { handleUpdateTechnique(editingTechnique.id, updates); setEditingTechnique(null); }} onCancel={() => setEditingTechnique(null)} />
+        </Modal>
+      )}
+      {showCreateTemplateModal && templateSourceEngagement && (
+        <Modal title="Create Template" onClose={() => setShowCreateTemplateModal(false)}>
+          <CreateTemplateForm
+            engagement={templateSourceEngagement}
+            onCreate={async (data) => {
+              try {
+                await api.createTemplate(data);
+                setShowCreateTemplateModal(false);
+                setTemplateSourceEngagement(null);
+              } catch (err) {
+                setError('Failed to create template');
+              }
+            }}
+            onCancel={() => {
+              setShowCreateTemplateModal(false);
+              setTemplateSourceEngagement(null);
+            }}
+          />
         </Modal>
       )}
     </div>
@@ -577,7 +666,7 @@ function Modal({ title, subtitle, children, onClose }) {
 // VIEWS
 // =============================================================================
 
-function DashboardView({ stats, engagements, onSelectEngagement, onNew, onQuickNew }) {
+function DashboardView({ stats, engagements, onSelectEngagement, onNew, onQuickNew, onDuplicateLatest }) {
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       <h1 className="text-xl font-bold">Dashboard</h1>
@@ -591,6 +680,13 @@ function DashboardView({ stats, engagements, onSelectEngagement, onNew, onQuickN
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold">Recent Engagements</h2>
           <div className="flex gap-2">
+            <button
+              onClick={onDuplicateLatest}
+              disabled={engagements.length === 0}
+              className="text-sm text-gray-400 hover:text-white disabled:opacity-40"
+            >
+              New from Last
+            </button>
             <button onClick={onQuickNew} className="text-sm text-gray-400 hover:text-white">Quick</button>
             <button onClick={onNew} className="text-sm text-purple-400 hover:text-purple-300">+ New Engagement</button>
           </div>
@@ -615,7 +711,7 @@ function DashboardView({ stats, engagements, onSelectEngagement, onNew, onQuickN
   );
 }
 
-function EngagementsListView({ engagements, onSelect, onDelete, onNew, onQuickNew }) {
+function EngagementsListView({ engagements, onSelect, onDelete, onNew, onQuickNew, onDuplicate }) {
   return (
     <div className="max-w-4xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
@@ -650,9 +746,16 @@ function EngagementsListView({ engagements, onSelect, onDelete, onNew, onQuickNe
                   </div>
                 </div>
               </button>
-              <button onClick={() => onDelete(e.id)} className="p-2 text-gray-400 hover:text-red-400 rounded">
-                <Trash2 className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-1">
+                {onDuplicate && (
+                  <button onClick={() => onDuplicate(e.id)} className="p-2 text-gray-400 hover:text-white rounded" title="Duplicate">
+                    <Clipboard className="w-4 h-4" />
+                  </button>
+                )}
+                <button onClick={() => onDelete(e.id)} className="p-2 text-gray-400 hover:text-red-400 rounded">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -661,7 +764,7 @@ function EngagementsListView({ engagements, onSelect, onDelete, onNew, onQuickNe
   );
 }
 
-function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onDeleteTechnique, onExportJSON, onExportCSV, onExportNavigator, onBack, onShowChecklist }) {
+function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onDeleteTechnique, onExportJSON, onExportCSV, onExportNavigator, onBack, onShowChecklist, onDuplicate, onCreateTemplate }) {
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
@@ -675,6 +778,12 @@ function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onD
         <div className="flex items-center gap-2">
           {onShowChecklist && (
             <button onClick={onShowChecklist} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Clipboard className="w-4 h-4" /> Checklist</button>
+          )}
+          {onCreateTemplate && (
+            <button onClick={onCreateTemplate} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Target className="w-4 h-4" /> Create Template</button>
+          )}
+          {onDuplicate && (
+            <button onClick={onDuplicate} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Clipboard className="w-4 h-4" /> Duplicate</button>
           )}
           <button onClick={onExportJSON} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> JSON</button>
           <button onClick={onExportCSV} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> CSV</button>
@@ -735,12 +844,31 @@ function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onD
   );
 }
 
-function KanbanView({ engagement, onUpdateTechnique, onEditTechnique, onBack }) {
+function KanbanView({ engagement, onUpdateTechnique, onEditTechnique, onBack, onAddSuggestedTechnique }) {
   const normalizedStatus = (status) => {
     if (status === 'planned') return 'ready';
     if (status === 'complete') return 'done';
     return status;
   };
+
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+
+  useEffect(() => {
+    loadSuggestions();
+  }, [engagement.id]);
+
+  async function loadSuggestions() {
+    setSuggestionsLoading(true);
+    try {
+      const data = await api.getSuggestedTechniques(engagement.id, { limit: 1 });
+      setSuggestions(data.suggestions || []);
+    } catch (err) {
+      console.error('Failed to load suggestions', err);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -751,6 +879,28 @@ function KanbanView({ engagement, onUpdateTechnique, onEditTechnique, onBack }) 
           <p className="text-sm text-gray-400">Kanban Board</p>
         </div>
       </div>
+
+      {suggestions.length > 0 && (
+        <div className="bg-gray-900 rounded-xl border border-gray-800 p-3 flex items-center justify-between">
+          <div>
+            <div className="text-xs text-gray-500">Next suggested technique</div>
+            <div className="font-medium text-sm">
+              {suggestions[0].technique_name || suggestions[0].technique_id}
+            </div>
+            <div className="text-xs text-gray-500">{suggestions[0].technique_id}</div>
+          </div>
+          <button
+            onClick={() => onAddSuggestedTechnique?.(suggestions[0])}
+            className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 rounded-lg text-xs"
+          >
+            Add
+          </button>
+        </div>
+      )}
+      {suggestionsLoading && suggestions.length === 0 && (
+        <div className="text-xs text-gray-500">Loading suggestions...</div>
+      )}
+
       <div className="grid grid-cols-5 gap-3">
         {KANBAN_COLUMNS.map(col => {
           const techs = (engagement.techniques || []).filter(
@@ -826,6 +976,78 @@ function NewEngagementForm({ onCreate, onCancel }) {
       <div className="flex gap-2 pt-2">
         <button onClick={onCancel} className="flex-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm">Cancel</button>
         <button onClick={() => name.trim() && onCreate({ name: name.trim(), description: description.trim(), methodology })} disabled={!name.trim()} className="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-lg text-sm">Create</button>
+      </div>
+    </div>
+  );
+}
+
+function CreateTemplateForm({ engagement, onCreate, onCancel }) {
+  const [name, setName] = useState(`${engagement.name} Template`);
+  const [description, setDescription] = useState(engagement.description || '');
+  const [objectives, setObjectives] = useState(engagement.objectives || '');
+  const [controls, setControls] = useState((engagement.control_attributions || []).join(', '));
+
+  const techniqueIds = (engagement.techniques || []).map(t => t.technique_id);
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium mb-1">Template Name</label>
+        <input
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500"
+          autoFocus
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium mb-1">Description (optional)</label>
+        <textarea
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          rows={2}
+          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500 resize-none"
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium mb-1">Default Objectives (optional)</label>
+        <textarea
+          value={objectives}
+          onChange={e => setObjectives(e.target.value)}
+          rows={2}
+          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500 resize-none"
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium mb-1">Default Controls (optional)</label>
+        <input
+          type="text"
+          value={controls}
+          onChange={e => setControls(e.target.value)}
+          placeholder="e.g., EDR, SIEM, NDR"
+          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500"
+        />
+      </div>
+      <div className="text-xs text-gray-500">
+        {techniqueIds.length} techniques will be included.
+      </div>
+      <div className="flex gap-2 pt-2">
+        <button onClick={onCancel} className="flex-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm">Cancel</button>
+        <button
+          onClick={() => name.trim() && onCreate({
+            name: name.trim(),
+            description: description.trim(),
+            methodology: engagement.methodology,
+            technique_ids: techniqueIds,
+            default_objectives: objectives.trim() || null,
+            default_controls: controls.split(',').map(item => item.trim()).filter(Boolean)
+          })}
+          disabled={!name.trim() || techniqueIds.length === 0}
+          className="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-lg text-sm"
+        >
+          Create Template
+        </button>
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   ChevronRight, ChevronLeft, Zap, Network, Check, Plus,
-  Target, Calendar, Users, Eye, EyeOff, Loader2
+  Calendar, Users, Eye, EyeOff, Loader2
 } from 'lucide-react';
 import * as api from '../../api/client';
 import TechniquePicker from './TechniquePicker';
@@ -10,10 +10,8 @@ import ThreatActorSelector from './ThreatActorSelector';
 import GapAnalysis from './GapAnalysis';
 
 const STEPS = [
-  { id: 'basics', label: 'Basics', description: 'Name and methodology' },
-  { id: 'quickstart', label: 'Quick Start', description: 'Use a template (optional)' },
+  { id: 'basics', label: 'Basics', description: 'Basics and template' },
   { id: 'techniques', label: 'Techniques', description: 'Select techniques' },
-  { id: 'team', label: 'Team', description: 'Assign leads' },
   { id: 'review', label: 'Review', description: 'Confirm and create' }
 ];
 
@@ -28,6 +26,7 @@ export default function EngagementWizard({ onComplete, onCancel }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [users, setUsers] = useState([]);
+  const [lastEngagement, setLastEngagement] = useState(null);
 
   // Form data
   const [formData, setFormData] = useState({
@@ -38,6 +37,9 @@ export default function EngagementWizard({ onComplete, onCancel }) {
     end_date: '',
     template: null,
     techniques: [],
+    objectives: '',
+    control_attributions: [],
+    plan_notes: '',
     red_team_lead: '',
     blue_team_lead: '',
     visibility_mode: 'open'
@@ -45,6 +47,7 @@ export default function EngagementWizard({ onComplete, onCancel }) {
 
   useEffect(() => {
     loadUsers();
+    loadLastEngagement();
   }, []);
 
   async function loadUsers() {
@@ -56,6 +59,15 @@ export default function EngagementWizard({ onComplete, onCancel }) {
     }
   }
 
+  async function loadLastEngagement() {
+    try {
+      const data = await api.getEngagements();
+      setLastEngagement(data?.[0] || null);
+    } catch (err) {
+      console.error('Failed to load last engagement:', err);
+    }
+  }
+
   function updateFormData(updates) {
     setFormData(prev => ({ ...prev, ...updates }));
   }
@@ -64,7 +76,9 @@ export default function EngagementWizard({ onComplete, onCancel }) {
     // Keep existing manual selections, just update template and methodology
     updateFormData({
       template,
-      methodology: template.methodology
+      methodology: template.methodology,
+      objectives: template.default_objectives || '',
+      control_attributions: template.default_controls || []
     });
   }
 
@@ -134,12 +148,8 @@ export default function EngagementWizard({ onComplete, onCancel }) {
     switch (STEPS[currentStep].id) {
       case 'basics':
         return formData.name.trim().length > 0;
-      case 'quickstart':
-        return true; // Optional step
       case 'techniques':
         return formData.techniques.length > 0 || formData.template;
-      case 'team':
-        return true; // Optional
       case 'review':
         return true;
       default:
@@ -173,54 +183,61 @@ export default function EngagementWizard({ onComplete, onCancel }) {
         end_date: formData.end_date || null,
         red_team_lead: formData.red_team_lead || null,
         blue_team_lead: formData.blue_team_lead || null,
-        visibility_mode: formData.visibility_mode
+        visibility_mode: formData.visibility_mode,
+        template_id: formData.template?.id || null,
+        last_used_template_id: formData.template?.id || null,
+        objectives: formData.objectives?.trim() || null,
+        control_attributions: formData.control_attributions || [],
+        plan_notes: formData.plan_notes?.trim() || null
       };
 
       const engagement = await api.createEngagement(engagementData);
 
-      // Track added technique IDs to prevent duplicates
-      const addedTechniqueIds = new Set();
+      const manualTechniques = formData.techniques.map(technique => ({
+        technique_id: technique.technique_id,
+        technique_name: technique.technique_name,
+        tactic: technique.tactics?.[0] || technique.tactic || 'Unknown',
+        description: technique.description,
+        source: 'manual'
+      }));
 
-      // Add manually selected techniques
-      for (const technique of formData.techniques) {
-        if (!addedTechniqueIds.has(technique.technique_id)) {
-          await api.addTechnique(engagement.id, {
-            technique_id: technique.technique_id,
-            technique_name: technique.technique_name,
-            tactic: technique.tactics?.[0] || technique.tactic || 'Unknown',
-            description: technique.description
-          });
-          addedTechniqueIds.add(technique.technique_id);
+      let templateTechniques = [];
+      if (formData.template?.technique_ids?.length > 0) {
+        try {
+          const attackData = await api.getAttackTechniques();
+          const techniqueMap = new Map(
+            (attackData.techniques || []).map(t => [t.technique_id, t])
+          );
+
+          templateTechniques = formData.template.technique_ids
+            .map(techniqueId => {
+              const technique = techniqueMap.get(techniqueId);
+              if (!technique) return null;
+              return {
+                technique_id: technique.technique_id,
+                technique_name: technique.technique_name,
+                tactic: technique.tactics?.[0] || 'Unknown',
+                description: technique.description,
+                source: 'template'
+              };
+            })
+            .filter(Boolean);
+        } catch (templateErr) {
+          console.error('Failed to load some template techniques:', templateErr);
         }
       }
 
-      // Add techniques from template if selected
-      if (formData.template?.technique_ids?.length > 0) {
-        // Fetch technique details from the attack API
-        try {
-          const attackTechniques = await api.getAttackTechniques();
-          const techniqueMap = new Map(
-            attackTechniques.map(t => [t.technique_id, t])
-          );
+      const combined = [...manualTechniques, ...templateTechniques];
+      const deduped = [];
+      const seen = new Set();
+      for (const technique of combined) {
+        if (seen.has(technique.technique_id)) continue;
+        seen.add(technique.technique_id);
+        deduped.push(technique);
+      }
 
-          for (const techniqueId of formData.template.technique_ids) {
-            if (!addedTechniqueIds.has(techniqueId)) {
-              const technique = techniqueMap.get(techniqueId);
-              if (technique) {
-                await api.addTechnique(engagement.id, {
-                  technique_id: technique.technique_id,
-                  technique_name: technique.technique_name,
-                  tactic: technique.tactics?.[0] || 'Unknown',
-                  description: technique.description
-                });
-                addedTechniqueIds.add(techniqueId);
-              }
-            }
-          }
-        } catch (templateErr) {
-          console.error('Failed to load some template techniques:', templateErr);
-          // Continue anyway - engagement was created successfully
-        }
+      if (deduped.length > 0) {
+        await api.addTechniquesBulk(engagement.id, deduped);
       }
 
       onComplete?.(engagement);
@@ -240,15 +257,20 @@ export default function EngagementWizard({ onComplete, onCancel }) {
         return (
           <BasicsStep
             formData={formData}
+            users={users}
+            lastEngagement={lastEngagement}
             onChange={updateFormData}
-          />
-        );
-      case 'quickstart':
-        return (
-          <QuickStartStep
-            selectedTemplate={formData.template}
             onSelectTemplate={handleTemplateSelect}
-            onSkip={() => handleNext()}
+            onResetDefaults={() => updateFormData({ objectives: '', control_attributions: [], plan_notes: '' })}
+            onUseLastEngagement={() => {
+              if (!lastEngagement) return;
+              updateFormData({
+                methodology: lastEngagement.methodology || formData.methodology,
+                objectives: lastEngagement.objectives || '',
+                control_attributions: lastEngagement.control_attributions || [],
+                plan_notes: lastEngagement.plan_notes || ''
+              });
+            }}
           />
         );
       case 'techniques':
@@ -259,14 +281,6 @@ export default function EngagementWizard({ onComplete, onCancel }) {
             onSelect={handleTechniqueSelect}
             onDeselect={handleTechniqueDeselect}
             onAddFromIds={handleAddTechniquesFromIds}
-          />
-        );
-      case 'team':
-        return (
-          <TeamStep
-            formData={formData}
-            users={users}
-            onChange={updateFormData}
           />
         );
       case 'review':
@@ -388,150 +402,255 @@ export default function EngagementWizard({ onComplete, onCancel }) {
 
 // Step Components
 
-function BasicsStep({ formData, onChange }) {
-  return (
-    <div className="space-y-6 max-w-lg">
-      <div>
-        <label className="block text-sm font-medium mb-2">Engagement Name</label>
-        <input
-          type="text"
-          value={formData.name}
-          onChange={(e) => onChange({ name: e.target.value })}
-          placeholder="e.g., Q1 2025 Detection Validation"
-          className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500"
-          autoFocus
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium mb-2">Description (optional)</label>
-        <textarea
-          value={formData.description}
-          onChange={(e) => onChange({ description: e.target.value })}
-          placeholder="Brief description of the engagement goals..."
-          rows={3}
-          className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500 resize-none"
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium mb-3">Methodology</label>
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => onChange({ methodology: 'atomic' })}
-            className={`p-4 rounded-xl border text-left transition-colors ${
-              formData.methodology === 'atomic'
-                ? 'border-orange-500 bg-orange-500/10'
-                : 'border-gray-700 hover:border-gray-600'
-            }`}
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <Zap className="w-5 h-5 text-orange-400" />
-              <span className="font-medium">Atomic</span>
-            </div>
-            <p className="text-sm text-gray-400">
-              Test techniques in isolation. Best for validating specific detection rules.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onChange({ methodology: 'scenario' })}
-            className={`p-4 rounded-xl border text-left transition-colors ${
-              formData.methodology === 'scenario'
-                ? 'border-blue-500 bg-blue-500/10'
-                : 'border-gray-700 hover:border-gray-600'
-            }`}
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <Network className="w-5 h-5 text-blue-400" />
-              <span className="font-medium">Scenario</span>
-            </div>
-            <p className="text-sm text-gray-400">
-              Full attack chain simulation. Tests detection of multi-stage attacks.
-            </p>
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium mb-2">
-            <Calendar className="w-4 h-4 inline mr-1" />
-            Start Date (optional)
-          </label>
-          <input
-            type="date"
-            value={formData.start_date}
-            onChange={(e) => onChange({ start_date: e.target.value })}
-            className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-2">
-            <Calendar className="w-4 h-4 inline mr-1" />
-            End Date (optional)
-          </label>
-          <input
-            type="date"
-            value={formData.end_date}
-            onChange={(e) => onChange({ end_date: e.target.value })}
-            className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500"
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function QuickStartStep({ selectedTemplate, onSelectTemplate, onSkip }) {
-  const [mode, setMode] = useState(selectedTemplate ? 'template' : null);
+function BasicsStep({
+  formData,
+  users,
+  lastEngagement,
+  onChange,
+  onSelectTemplate,
+  onResetDefaults,
+  onUseLastEngagement
+}) {
+  const controlsText = (formData.control_attributions || []).join(', ');
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4 mb-6">
-        <button
-          onClick={() => setMode(null)}
-          className={`flex-1 p-4 rounded-xl border text-center ${
-            mode === null
-              ? 'border-purple-500 bg-purple-500/10'
-              : 'border-gray-700 hover:border-gray-600'
-          }`}
-        >
-          <Plus className="w-6 h-6 mx-auto mb-2 text-gray-400" />
-          <span className="font-medium">Start from Scratch</span>
-          <p className="text-xs text-gray-500 mt-1">Build your own technique list</p>
-        </button>
-        <button
-          onClick={() => setMode('template')}
-          className={`flex-1 p-4 rounded-xl border text-center ${
-            mode === 'template'
-              ? 'border-purple-500 bg-purple-500/10'
-              : 'border-gray-700 hover:border-gray-600'
-          }`}
-        >
-          <Target className="w-6 h-6 mx-auto mb-2 text-gray-400" />
-          <span className="font-medium">Use a Template</span>
-          <p className="text-xs text-gray-500 mt-1">Pre-built technique sets</p>
-        </button>
-      </div>
-
-      {mode === 'template' && (
-        <TemplateSelector onSelectTemplate={onSelectTemplate} />
-      )}
-
-      {selectedTemplate && (
-        <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
-          <div className="flex items-center gap-2 text-green-400">
-            <Check className="w-5 h-5" />
-            <span className="font-medium">Template Selected: {selectedTemplate.name}</span>
+    <div className="space-y-6 max-w-3xl">
+      <div className="grid md:grid-cols-2 gap-6">
+        <div className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium mb-2">Engagement Name</label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => onChange({ name: e.target.value })}
+              placeholder="e.g., Q1 2025 Detection Validation"
+              className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500"
+              autoFocus
+            />
           </div>
-          <p className="text-sm text-gray-400 mt-1">
-            {selectedTemplate.technique_count || (selectedTemplate.technique_ids || []).length} techniques will be pre-loaded
-          </p>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Description (optional)</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => onChange({ description: e.target.value })}
+              placeholder="Brief description of the engagement goals..."
+              rows={3}
+              className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500 resize-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-3">Methodology</label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => onChange({ methodology: 'atomic' })}
+                className={`p-4 rounded-xl border text-left transition-colors ${
+                  formData.methodology === 'atomic'
+                    ? 'border-orange-500 bg-orange-500/10'
+                    : 'border-gray-700 hover:border-gray-600'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <Zap className="w-5 h-5 text-orange-400" />
+                  <span className="font-medium">Atomic</span>
+                </div>
+                <p className="text-sm text-gray-400">
+                  Test techniques in isolation. Best for validating specific detection rules.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onChange({ methodology: 'scenario' })}
+                className={`p-4 rounded-xl border text-left transition-colors ${
+                  formData.methodology === 'scenario'
+                    ? 'border-blue-500 bg-blue-500/10'
+                    : 'border-gray-700 hover:border-gray-600'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <Network className="w-5 h-5 text-blue-400" />
+                  <span className="font-medium">Scenario</span>
+                </div>
+                <p className="text-sm text-gray-400">
+                  Full attack chain simulation. Tests detection of multi-stage attacks.
+                </p>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                <Calendar className="w-4 h-4 inline mr-1" />
+                Start Date (optional)
+              </label>
+              <input
+                type="date"
+                value={formData.start_date}
+                onChange={(e) => onChange({ start_date: e.target.value })}
+                className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                <Calendar className="w-4 h-4 inline mr-1" />
+                End Date (optional)
+              </label>
+              <input
+                type="date"
+                value={formData.end_date}
+                onChange={(e) => onChange({ end_date: e.target.value })}
+                className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500"
+              />
+            </div>
+          </div>
         </div>
-      )}
+
+        <div className="space-y-6">
+          <div className="bg-gray-800/40 rounded-xl border border-gray-800 p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium">Template (optional)</h3>
+                <p className="text-xs text-gray-500">Choose a template to auto-fill techniques and defaults.</p>
+              </div>
+              {lastEngagement && (
+                <button
+                  type="button"
+                  onClick={onUseLastEngagement}
+                  className="text-xs text-purple-400 hover:text-purple-300"
+                >
+                  Use last engagement defaults
+                </button>
+              )}
+            </div>
+            <TemplateSelector onSelectTemplate={onSelectTemplate} />
+            {formData.template && (
+              <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-xs text-green-200">
+                Template selected: <span className="font-medium">{formData.template.name}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-medium">Planning Defaults</h3>
+              <button
+                type="button"
+                onClick={onResetDefaults}
+                className="text-xs text-gray-400 hover:text-white"
+              >
+                Reset to blank
+              </button>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Objectives (optional)</label>
+              <textarea
+                value={formData.objectives}
+                onChange={(e) => onChange({ objectives: e.target.value })}
+                placeholder="Key outcomes you want to validate..."
+                rows={3}
+                className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500 resize-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Control Attributions (optional)</label>
+              <input
+                type="text"
+                value={controlsText}
+                onChange={(e) => onChange({
+                  control_attributions: e.target.value
+                    .split(',')
+                    .map(item => item.trim())
+                    .filter(Boolean)
+                })}
+                placeholder="e.g., EDR, SIEM, NDR"
+                className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">Comma-separated list of key controls/tools.</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Planning Notes (optional)</label>
+              <textarea
+                value={formData.plan_notes}
+                onChange={(e) => onChange({ plan_notes: e.target.value })}
+                placeholder="Anything you want to remember when execution starts..."
+                rows={3}
+                className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500 resize-none"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="font-medium">Team & Visibility (optional)</h3>
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                <Users className="w-4 h-4 inline mr-1" />
+                Red Team Lead
+              </label>
+              <select
+                value={formData.red_team_lead}
+                onChange={(e) => onChange({ red_team_lead: e.target.value })}
+                className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500"
+              >
+                <option value="">Select red team lead...</option>
+                {users.map(user => (
+                  <option key={user.id} value={user.id}>
+                    {user.display_name || user.username}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                <Users className="w-4 h-4 inline mr-1" />
+                Blue Team Lead
+              </label>
+              <select
+                value={formData.blue_team_lead}
+                onChange={(e) => onChange({ blue_team_lead: e.target.value })}
+                className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500"
+              >
+                <option value="">Select blue team lead...</option>
+                {users.map(user => (
+                  <option key={user.id} value={user.id}>
+                    {user.display_name || user.username}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-3">Visibility Mode</label>
+              <div className="space-y-2">
+                {VISIBILITY_MODES.map(mode => {
+                  const Icon = mode.icon;
+                  return (
+                    <button
+                      key={mode.id}
+                      onClick={() => onChange({ visibility_mode: mode.id })}
+                      className={`w-full p-3 rounded-lg border text-left flex items-center gap-3 ${
+                        formData.visibility_mode === mode.id
+                          ? 'border-purple-500 bg-purple-500/10'
+                          : 'border-gray-700 hover:border-gray-600'
+                      }`}
+                    >
+                      <Icon className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <span className="font-medium">{mode.label}</span>
+                        <p className="text-xs text-gray-500">{mode.description}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -572,6 +691,7 @@ function TechniquesStep({ selectedTechniques, template, onSelect, onDeselect, on
             selectedTechniques={selectedTechniques}
             onSelect={onSelect}
             onDeselect={onDeselect}
+            existingTechniqueIds={selectedTechniques.map(t => t.technique_id)}
           />
         )}
         {activeTab === 'by-threat' && (
@@ -589,76 +709,6 @@ function TechniquesStep({ selectedTechniques, template, onSelect, onDeselect, on
         <div className="text-sm text-gray-400">
           {selectedTechniques.length} technique{selectedTechniques.length !== 1 ? 's' : ''} selected
           {template && ` (+ ${(template.technique_ids || []).length} from template)`}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TeamStep({ formData, users, onChange }) {
-  return (
-    <div className="space-y-6 max-w-lg">
-      <div>
-        <label className="block text-sm font-medium mb-2">
-          <Users className="w-4 h-4 inline mr-1" />
-          Red Team Lead (optional)
-        </label>
-        <select
-          value={formData.red_team_lead}
-          onChange={(e) => onChange({ red_team_lead: e.target.value })}
-          className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500"
-        >
-          <option value="">Select red team lead...</option>
-          {users.map(user => (
-            <option key={user.id} value={user.id}>
-              {user.display_name || user.username}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium mb-2">
-          <Users className="w-4 h-4 inline mr-1" />
-          Blue Team Lead (optional)
-        </label>
-        <select
-          value={formData.blue_team_lead}
-          onChange={(e) => onChange({ blue_team_lead: e.target.value })}
-          className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-purple-500"
-        >
-          <option value="">Select blue team lead...</option>
-          {users.map(user => (
-            <option key={user.id} value={user.id}>
-              {user.display_name || user.username}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium mb-3">Visibility Mode</label>
-        <div className="space-y-2">
-          {VISIBILITY_MODES.map(mode => {
-            const Icon = mode.icon;
-            return (
-              <button
-                key={mode.id}
-                onClick={() => onChange({ visibility_mode: mode.id })}
-                className={`w-full p-3 rounded-lg border text-left flex items-center gap-3 ${
-                  formData.visibility_mode === mode.id
-                    ? 'border-purple-500 bg-purple-500/10'
-                    : 'border-gray-700 hover:border-gray-600'
-                }`}
-              >
-                <Icon className="w-5 h-5 text-gray-400" />
-                <div>
-                  <span className="font-medium">{mode.label}</span>
-                  <p className="text-xs text-gray-500">{mode.description}</p>
-                </div>
-              </button>
-            );
-          })}
         </div>
       </div>
     </div>
@@ -738,6 +788,35 @@ function ReviewStep({ formData, users }) {
           <div className="pt-4 border-t border-gray-700">
             <span className="text-xs text-gray-500">Template</span>
             <p className="font-medium">{formData.template.name}</p>
+          </div>
+        )}
+
+        {(formData.objectives || (formData.control_attributions || []).length > 0 || formData.plan_notes) && (
+          <div className="pt-4 border-t border-gray-700 space-y-3">
+            {formData.objectives && (
+              <div>
+                <span className="text-xs text-gray-500">Objectives</span>
+                <p className="text-sm text-gray-300 mt-1">{formData.objectives}</p>
+              </div>
+            )}
+            {(formData.control_attributions || []).length > 0 && (
+              <div>
+                <span className="text-xs text-gray-500">Control Attributions</span>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {formData.control_attributions.map(control => (
+                    <span key={control} className="px-2 py-0.5 bg-gray-800 rounded text-xs text-gray-300">
+                      {control}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {formData.plan_notes && (
+              <div>
+                <span className="text-xs text-gray-500">Planning Notes</span>
+                <p className="text-sm text-gray-300 mt-1">{formData.plan_notes}</p>
+              </div>
+            )}
           </div>
         )}
       </div>

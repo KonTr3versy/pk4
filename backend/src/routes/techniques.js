@@ -6,6 +6,7 @@
  * - DELETE /api/techniques/:id - Delete a technique
  * - POST /api/techniques/:id/outcomes - Add detection outcome
  * - DELETE /api/techniques/:id/outcomes/:outcomeId - Remove detection outcome
+ * - GET /api/techniques/search - Search techniques with recents/most used
  * 
  * Also handles security controls:
  * - GET /api/techniques/controls - List available security controls
@@ -14,6 +15,132 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
+
+// =============================================================================
+// GET /api/techniques/search
+// =============================================================================
+// Search techniques with optional recents/most used signals
+router.get('/search', async (req, res) => {
+  try {
+    const {
+      search,
+      tactic,
+      platform,
+      recent,
+      most_used,
+      limit = 50
+    } = req.query;
+
+    const wantsUsage = recent === 'true' || most_used === 'true';
+
+    if (wantsUsage) {
+      const usageQuery = `
+        WITH usage AS (
+          SELECT
+            technique_id,
+            COUNT(*) as use_count,
+            MAX(used_at) as last_used
+          FROM technique_usage
+          GROUP BY technique_id
+        ),
+        latest_techniques AS (
+          SELECT DISTINCT ON (technique_id)
+            technique_id,
+            technique_name,
+            tactic,
+            description
+          FROM techniques
+          ORDER BY technique_id, created_at DESC
+        )
+        SELECT
+          u.technique_id,
+          COALESCE(t.technique_name, a.technique_name) as technique_name,
+          COALESCE(t.tactic, a.tactic) as tactic,
+          COALESCE(t.description, a.description) as description,
+          u.use_count,
+          u.last_used
+        FROM usage u
+        LEFT JOIN latest_techniques t ON t.technique_id = u.technique_id
+        LEFT JOIN attack_library a ON a.technique_id = u.technique_id
+      `;
+
+      const filters = [];
+      const values = [];
+      let paramCount = 1;
+
+      if (tactic) {
+        filters.push(`LOWER(COALESCE(t.tactic, a.tactic)) = LOWER($${paramCount++})`);
+        values.push(tactic);
+      }
+
+      if (platform) {
+        filters.push(`$${paramCount++} = ANY(a.platforms)`);
+        values.push(platform);
+      }
+
+      if (search) {
+        filters.push(`(
+          LOWER(u.technique_id) LIKE LOWER($${paramCount})
+          OR LOWER(COALESCE(t.technique_name, a.technique_name)) LIKE LOWER($${paramCount})
+        )`);
+        values.push(`%${search}%`);
+        paramCount++;
+      }
+
+      const whereClause = filters.length ? ` WHERE ${filters.join(' AND ')}` : '';
+      const orderBy = most_used === 'true'
+        ? 'ORDER BY u.use_count DESC, u.last_used DESC'
+        : 'ORDER BY u.last_used DESC';
+
+      const finalQuery = `${usageQuery} ${whereClause} ${orderBy} LIMIT $${paramCount}`;
+      values.push(parseInt(limit));
+
+      const result = await db.query(finalQuery, values);
+      return res.json({ techniques: result.rows });
+    }
+
+    // Default search against attack_library
+    const filters = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (search) {
+      filters.push(`(
+        LOWER(technique_id) LIKE LOWER($${paramCount})
+        OR LOWER(technique_name) LIKE LOWER($${paramCount})
+        OR LOWER(COALESCE(description, '')) LIKE LOWER($${paramCount})
+      )`);
+      values.push(`%${search}%`);
+      paramCount++;
+    }
+
+    if (tactic) {
+      filters.push(`LOWER(tactic) = LOWER($${paramCount++})`);
+      values.push(tactic);
+    }
+
+    if (platform) {
+      filters.push(`$${paramCount++} = ANY(platforms)`);
+      values.push(platform);
+    }
+
+    const whereClause = filters.length ? ` WHERE ${filters.join(' AND ')}` : '';
+    const query = `
+      SELECT technique_id, technique_name, tactic, description, platforms, data_sources
+      FROM attack_library
+      ${whereClause}
+      ORDER BY technique_id ASC
+      LIMIT $${paramCount}
+    `;
+    values.push(parseInt(limit));
+
+    const result = await db.query(query, values);
+    res.json({ techniques: result.rows });
+  } catch (error) {
+    console.error('Error searching techniques:', error);
+    res.status(500).json({ error: 'Failed to search techniques' });
+  }
+});
 
 // =============================================================================
 // GET /api/techniques/controls

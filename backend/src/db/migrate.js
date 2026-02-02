@@ -277,6 +277,8 @@ const migrations = [
       description TEXT,
       methodology VARCHAR(20) NOT NULL,
       technique_ids TEXT[],
+      default_objectives TEXT,
+      default_controls TEXT[],
       estimated_duration_hours INTEGER,
       is_public BOOLEAN DEFAULT false,
       created_by UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -287,6 +289,24 @@ const migrations = [
   `,
 
   `CREATE INDEX IF NOT EXISTS idx_templates_public ON engagement_templates(is_public);`,
+
+  // ==========================================================================
+  // TECHNIQUE USAGE TABLE
+  // ==========================================================================
+  // Tracks technique usage to power recents and suggestions
+  `
+    CREATE TABLE IF NOT EXISTS technique_usage (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      technique_id VARCHAR(20) NOT NULL,
+      engagement_id UUID REFERENCES engagements(id) ON DELETE SET NULL,
+      used_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      source VARCHAR(30) DEFAULT 'manual'
+    );
+  `,
+
+  `CREATE INDEX IF NOT EXISTS idx_technique_usage_technique ON technique_usage(technique_id);`,
+  `CREATE INDEX IF NOT EXISTS idx_technique_usage_used_at ON technique_usage(used_at);`,
+  `CREATE INDEX IF NOT EXISTS idx_technique_usage_engagement ON technique_usage(engagement_id);`,
 
   // ==========================================================================
   // TECHNIQUE HISTORY TABLE
@@ -391,6 +411,10 @@ const migrations = [
   `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS start_date DATE;`,
   `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS end_date DATE;`,
   `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS template_id UUID REFERENCES engagement_templates(id);`,
+  `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS last_used_template_id UUID REFERENCES engagement_templates(id);`,
+  `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS plan_notes TEXT;`,
+  `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS objectives TEXT;`,
+  `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS control_attributions TEXT[];`,
 
   // ==========================================================================
   // DOCUMENT WORKFLOW: ENGAGEMENT STATUS ENHANCEMENT
