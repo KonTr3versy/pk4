@@ -8,7 +8,7 @@
     "dev": "nodemon src/index.js",
     "migrate": "node src/db/migrate.js",
     "seed": "node src/db/seed.js",
-    "test": "jest"
+    "test": "jest --runInBand --ci"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.2",
-    "jest": "^29.7.0"
+    "jest": "^29.7.0",
+    "supertest": "file:tests/supertest-lite"
   }
 }
