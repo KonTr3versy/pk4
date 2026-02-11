@@ -2,6 +2,7 @@ const request = require('supertest');
 const bcrypt = require('bcryptjs');
 const { randomUUID } = require('crypto');
 const { createMockDb } = require('./mockDb');
+const { generateToken } = require('../src/middleware/auth');
 
 const mockDb = createMockDb();
 
@@ -22,6 +23,7 @@ describe('Critical API behavior', () => {
     mockDb.state.techniques = [];
     mockDb.state.approvals = [];
     mockDb.state.engagementRoles = [];
+    mockDb.state.actionItems = [];
 
     const passwordHash = await bcrypt.hash('Password123!', 10);
     userId = randomUUID();
@@ -228,4 +230,66 @@ describe('Critical API behavior', () => {
     expect(exportRes.body.engagement.name).toBe('Primary Engagement');
     expect(Array.isArray(exportRes.body.techniques)).toBe(true);
   });
+
+  test('action item update/delete reject cross-engagement access', async () => {
+    const memberPasswordHash = await bcrypt.hash('Password123!', 10);
+    const memberId = randomUUID();
+
+    mockDb.state.users.push({
+      id: memberId,
+      username: 'member',
+      password_hash: memberPasswordHash,
+      display_name: 'Member User',
+      role: 'user',
+      created_at: new Date().toISOString()
+    });
+
+    const memberToken = generateToken({
+      id: memberId,
+      username: 'member',
+      role: 'user'
+    });
+    const otherEngagementId = randomUUID();
+    const protectedItemId = randomUUID();
+
+    mockDb.state.engagements.push({
+      id: otherEngagementId,
+      name: 'Other Engagement',
+      description: 'other',
+      methodology: 'atomic',
+      status: 'planning',
+      created_at: new Date().toISOString()
+    });
+
+    mockDb.state.engagementRoles.push({
+      engagement_id: engagementId,
+      user_id: memberId,
+      role: 'operator'
+    });
+
+    mockDb.state.actionItems.push({
+      id: protectedItemId,
+      engagement_id: otherEngagementId,
+      title: 'Protected item',
+      status: 'open'
+    });
+
+    const updateRes = await request(app)
+      .put(`/api/action-items/item/${protectedItemId}`)
+      .set('Authorization', `Bearer ${memberToken}`)
+      .send({ title: 'Attempted edit' });
+
+    expect(updateRes.status).toBe(403);
+    expect(updateRes.body.error).toBe('Access denied');
+
+    const deleteRes = await request(app)
+      .delete(`/api/action-items/item/${protectedItemId}`)
+      .set('Authorization', `Bearer ${memberToken}`);
+
+    expect(deleteRes.status).toBe(403);
+    expect(deleteRes.body.error).toBe('Access denied');
+
+    expect(mockDb.state.actionItems.some((item) => item.id === protectedItemId)).toBe(true);
+  });
+
 });
