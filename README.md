@@ -176,6 +176,7 @@ docker-compose exec db psql -U purplekit  # Database shell
 | GET | `/api/auth/status` | Check if setup is needed |
 | POST | `/api/auth/setup` | Create first admin user (one-time) |
 | POST | `/api/auth/login` | Login and get JWT token |
+| POST | `/api/auth/refresh` | Rotate refresh token and issue new short-lived access token |
 | GET | `/api/auth/me` | Get current user info |
 | POST | `/api/auth/users` | Create user (admin only) |
 | GET | `/api/auth/users` | List all users (admin only) |
@@ -231,15 +232,32 @@ docker-compose exec db psql -U purplekit  # Database shell
 | `NODE_ENV` | Environment mode | `development` or `production` |
 | `PORT` | Server port | `3000` |
 | `JWT_SECRET` | Secret key for JWT tokens | Random string (32+ chars recommended) |
+| `JWT_REFRESH_SECRET` | Secret key for refresh tokens (set separately in production) | Random string (32+ chars recommended) |
+| `JWT_ACCESS_TOKEN_TTL` | Access token lifetime | `15m` |
+| `JWT_REFRESH_TOKEN_TTL` | Refresh token lifetime | `7d` |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated frontend origin allowlist (required in production) | `https://purplekit.io,https://www.purplekit.io` |
+| `AUTH_RATE_LIMIT_WINDOW_MS` | Auth rate-limit window in milliseconds | `900000` |
+| `AUTH_RATE_LIMIT_MAX` | Max auth attempts per IP in the rate-limit window | `10` |
 
 ## Authentication
 
 PurpleKit uses JWT-based authentication:
 
 1. **First Run Setup** - The first visitor creates an admin account
-2. **Login** - Users authenticate with username/password to get a JWT token
-3. **Token Storage** - Tokens are stored in localStorage (valid for 7 days)
-4. **Protected Routes** - All API routes except `/api/auth/*` require authentication
+2. **Login** - Users authenticate with username/password to get a short-lived access token + refresh token pair
+3. **Token Rotation** - Access tokens default to 15 minutes and are refreshed automatically using `/api/auth/refresh`
+4. **Token Storage** - Tokens are currently stored in localStorage; migration to `httpOnly` secure cookies is recommended for a future release
+5. **Protected Routes** - All API routes except `/api/auth/*` require authentication
+
+### Security defaults by environment
+
+- **Development**
+  - CORS is permissive for local iteration.
+  - Helmet CSP is disabled to avoid blocking hot-reload and dev assets.
+- **Production**
+  - CORS only allows origins listed in `CORS_ALLOWED_ORIGINS`.
+  - Helmet CSP is enabled with a strict `self` baseline and explicit allowances for bundled frontend assets (`script-src 'self'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: blob:`).
+  - `/api/auth/*` is protected by explicit rate limiting (`AUTH_RATE_LIMIT_WINDOW_MS`, `AUTH_RATE_LIMIT_MAX`).
 
 ### User Roles
 - **admin** - Can create/delete users, full access

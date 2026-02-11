@@ -14,7 +14,24 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const router = express.Router();
 const db = require('../db/connection');
-const { requireAuth, requireAdmin, generateToken } = require('../middleware/auth');
+const {
+  requireAuth,
+  requireAdmin,
+  generateToken,
+  generateRefreshToken,
+  verifyRefreshToken,
+} = require('../middleware/auth');
+
+function sanitizeInput(value) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .trim();
+}
 
 // =============================================================================
 // POST /api/auth/setup
@@ -22,7 +39,9 @@ const { requireAuth, requireAdmin, generateToken } = require('../middleware/auth
 // Creates the initial admin user. Only works if no users exist.
 router.post('/setup', async (req, res) => {
   try {
-    const { username, password, displayName } = req.body;
+    const username = sanitizeInput(req.body.username);
+    const password = req.body.password;
+    const displayName = sanitizeInput(req.body.displayName);
     
     // Check if any users exist
     const existingUsers = await db.query('SELECT COUNT(*) FROM users');
@@ -56,6 +75,7 @@ router.post('/setup', async (req, res) => {
     
     const user = result.rows[0];
     const token = generateToken(user);
+    const refreshToken = generateRefreshToken(user);
     
     res.status(201).json({
       message: 'Admin user created successfully',
@@ -66,6 +86,7 @@ router.post('/setup', async (req, res) => {
         role: user.role,
       },
       token,
+      refreshToken,
     });
   } catch (error) {
     console.error('Setup error:', error);
@@ -98,7 +119,8 @@ router.get('/status', async (req, res) => {
 // Authenticate user and return JWT token
 router.post('/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const username = sanitizeInput(req.body.username);
+    const password = req.body.password;
     
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password are required' });
@@ -124,6 +146,7 @@ router.post('/login', async (req, res) => {
     
     // Generate token
     const token = generateToken(user);
+    const refreshToken = generateRefreshToken(user);
     
     res.json({
       user: {
@@ -133,6 +156,7 @@ router.post('/login', async (req, res) => {
         role: user.role,
       },
       token,
+      refreshToken,
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -170,12 +194,57 @@ router.get('/me', requireAuth, async (req, res) => {
 });
 
 // =============================================================================
+// POST /api/auth/refresh
+// =============================================================================
+// Refresh access token using refresh token
+router.post('/refresh', async (req, res) => {
+  try {
+    const refreshToken = req.body.refreshToken;
+
+    if (!refreshToken) {
+      return res.status(400).json({ error: 'Refresh token is required' });
+    }
+
+    let decoded;
+    try {
+      decoded = verifyRefreshToken(refreshToken);
+    } catch (error) {
+      return res.status(401).json({ error: 'Invalid refresh token' });
+    }
+
+    const result = await db.query(
+      'SELECT id, username, display_name, role FROM users WHERE id = $1',
+      [decoded.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    const user = result.rows[0];
+    const token = generateToken(user);
+    const nextRefreshToken = generateRefreshToken(user);
+
+    res.json({
+      token,
+      refreshToken: nextRefreshToken,
+    });
+  } catch (error) {
+    console.error('Refresh token error:', error);
+    res.status(500).json({ error: 'Failed to refresh token' });
+  }
+});
+
+// =============================================================================
 // POST /api/auth/users
 // =============================================================================
 // Create a new user (admin only)
 router.post('/users', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { username, password, displayName, role } = req.body;
+    const username = sanitizeInput(req.body.username);
+    const password = req.body.password;
+    const displayName = sanitizeInput(req.body.displayName);
+    const role = sanitizeInput(req.body.role);
     
     // Validate input
     if (!username || !password) {
