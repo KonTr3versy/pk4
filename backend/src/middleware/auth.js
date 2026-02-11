@@ -8,6 +8,9 @@ const jwt = require('jsonwebtoken');
 
 // Secret key for JWT signing - in production, use environment variable
 const JWT_SECRET = process.env.JWT_SECRET || 'purplekit-secret-change-in-production';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || JWT_SECRET;
+const JWT_ACCESS_TOKEN_TTL = process.env.JWT_ACCESS_TOKEN_TTL || '15m';
+const JWT_REFRESH_TOKEN_TTL = process.env.JWT_REFRESH_TOKEN_TTL || '7d';
 
 /**
  * Middleware that requires authentication
@@ -63,13 +66,43 @@ function generateToken(user) {
       role: user.role 
     },
     JWT_SECRET,
-    { expiresIn: '7d' }  // Token valid for 7 days
+    { expiresIn: JWT_ACCESS_TOKEN_TTL }
   );
+}
+
+/**
+ * Generate a refresh token for a user
+ */
+function generateRefreshToken(user) {
+  return jwt.sign(
+    {
+      id: user.id,
+      tokenType: 'refresh',
+    },
+    JWT_REFRESH_SECRET,
+    { expiresIn: JWT_REFRESH_TOKEN_TTL }
+  );
+}
+
+/**
+ * Verify a refresh token
+ */
+function verifyRefreshToken(token) {
+  const decoded = jwt.verify(token, JWT_REFRESH_SECRET);
+  if (decoded.tokenType !== 'refresh') {
+    throw new Error('Invalid refresh token');
+  }
+  return decoded;
 }
 
 module.exports = {
   requireAuth,
   requireAdmin,
   generateToken,
+  generateRefreshToken,
+  verifyRefreshToken,
+  JWT_ACCESS_TOKEN_TTL,
+  JWT_REFRESH_TOKEN_TTL,
   JWT_SECRET,
+  JWT_REFRESH_SECRET,
 };

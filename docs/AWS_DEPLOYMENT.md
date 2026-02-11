@@ -352,11 +352,18 @@ cp .env.example .env
 nano .env
 ```
 
-Update with your RDS values:
+Update with your RDS values and security settings:
 ```
 DATABASE_URL=postgresql://purplekit:YOUR_RDS_PASSWORD@YOUR_RDS_ENDPOINT:5432/purplekit
 NODE_ENV=production
 PORT=3000
+JWT_SECRET=replace-with-32-plus-char-random-secret
+JWT_REFRESH_SECRET=replace-with-different-32-plus-char-random-secret
+JWT_ACCESS_TOKEN_TTL=15m
+JWT_REFRESH_TOKEN_TTL=7d
+CORS_ALLOWED_ORIGINS=https://purplekit.io,https://www.purplekit.io
+AUTH_RATE_LIMIT_WINDOW_MS=900000
+AUTH_RATE_LIMIT_MAX=10
 ```
 
 Example:
@@ -364,7 +371,31 @@ Example:
 DATABASE_URL=postgresql://purplekit:MyStr0ngP@ss@purplekit-db.abc123xyz.us-east-1.rds.amazonaws.com:5432/purplekit
 NODE_ENV=production
 PORT=3000
+JWT_SECRET=5Y2fYkPp6hQn3nRq9mN7qE1sDx4rU8aL
+JWT_REFRESH_SECRET=8mJ3tPn6Qw2xLe9aT4vRc7dKs5yHu1Bz
+JWT_ACCESS_TOKEN_TTL=15m
+JWT_REFRESH_TOKEN_TTL=7d
+CORS_ALLOWED_ORIGINS=https://purplekit.io,https://www.purplekit.io
+AUTH_RATE_LIMIT_WINDOW_MS=900000
+AUTH_RATE_LIMIT_MAX=10
 ```
+
+> **Why these matter in production**
+> - `CORS_ALLOWED_ORIGINS` enforces an explicit browser origin allowlist.
+> - `JWT_ACCESS_TOKEN_TTL` + refresh flow reduce token replay window versus long-lived bearer tokens.
+> - `AUTH_RATE_LIMIT_*` throttles `/api/auth/*` traffic to reduce brute-force attempts.
+> - `JWT_SECRET` and `JWT_REFRESH_SECRET` should be different high-entropy values.
+
+### Step 3.6.1: Lock down EC2 ingress
+
+For stronger edge security, only expose HTTP/HTTPS via Cloudflare and keep SSH scoped to your IP.
+
+Recommended EC2 security group rules:
+- **Port 22 (SSH):** Your office/VPN CIDR only
+- **Port 80 (HTTP):** Cloudflare IP ranges only (or your load balancer/security tier)
+- **Port 443 (HTTPS):** Cloudflare IP ranges only if terminating TLS on EC2
+
+Also set Cloudflare SSL mode to **Full (strict)** once your origin has a valid certificate.
 
 Save and exit: `Ctrl+X`, then `Y`, then `Enter`
 

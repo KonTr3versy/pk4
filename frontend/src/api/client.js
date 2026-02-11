@@ -15,6 +15,10 @@ function getToken() {
   return localStorage.getItem('purplekit_token');
 }
 
+function getRefreshToken() {
+  return localStorage.getItem('purplekit_refresh_token');
+}
+
 /**
  * Store the auth token
  */
@@ -22,11 +26,56 @@ function setToken(token) {
   localStorage.setItem('purplekit_token', token);
 }
 
+function setRefreshToken(token) {
+  localStorage.setItem('purplekit_refresh_token', token);
+}
+
 /**
  * Clear the auth token
  */
 function clearToken() {
   localStorage.removeItem('purplekit_token');
+  localStorage.removeItem('purplekit_refresh_token');
+}
+
+function sanitizeAuthInput(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .trim();
+}
+
+async function refreshAuthToken() {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    return false;
+  }
+
+  const response = await fetch(`${API_BASE}/auth/refresh`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ refreshToken }),
+  });
+
+  if (!response.ok) {
+    clearToken();
+    return false;
+  }
+
+  const data = await response.json();
+  if (data.token) {
+    setToken(data.token);
+  }
+  if (data.refreshToken) {
+    setRefreshToken(data.refreshToken);
+  }
+  return Boolean(data.token);
 }
 
 /**
@@ -56,8 +105,21 @@ async function apiRequest(endpoint, options = {}) {
     delete config.headers['Content-Type'];
   }
   
+  const sendRequest = () => fetch(url, config);
+
   try {
-    const response = await fetch(url, config);
+    let response = await sendRequest();
+
+    if (response.status === 401 && endpoint !== '/auth/refresh') {
+      const refreshed = await refreshAuthToken();
+      if (refreshed) {
+        const nextToken = getToken();
+        if (nextToken) {
+          config.headers.Authorization = `Bearer ${nextToken}`;
+        }
+        response = await sendRequest();
+      }
+    }
     
     // Handle non-JSON responses (like CSV downloads)
     const contentType = response.headers.get('content-type');
@@ -97,10 +159,17 @@ export async function checkAuthStatus() {
 export async function setupAdmin(username, password, displayName) {
   const data = await apiRequest('/auth/setup', {
     method: 'POST',
-    body: JSON.stringify({ username, password, displayName }),
+    body: JSON.stringify({
+      username: sanitizeAuthInput(username),
+      password,
+      displayName: sanitizeAuthInput(displayName),
+    }),
   });
   if (data.token) {
     setToken(data.token);
+  }
+  if (data.refreshToken) {
+    setRefreshToken(data.refreshToken);
   }
   return data;
 }
@@ -108,10 +177,16 @@ export async function setupAdmin(username, password, displayName) {
 export async function login(username, password) {
   const data = await apiRequest('/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({
+      username: sanitizeAuthInput(username),
+      password,
+    }),
   });
   if (data.token) {
     setToken(data.token);
+  }
+  if (data.refreshToken) {
+    setRefreshToken(data.refreshToken);
   }
   return data;
 }
@@ -125,7 +200,7 @@ export async function getCurrentUser() {
 }
 
 export function isLoggedIn() {
-  return !!getToken();
+  return !!(getToken() || getRefreshToken());
 }
 
 // =============================================================================
@@ -669,14 +744,26 @@ export async function getEngagementDocuments(engagementId) {
 }
 
 export async function downloadDocument(engagementId, documentId) {
-  const token = getToken();
+  let token = getToken();
   const url = `${API_BASE}/documents/${engagementId}/${documentId}/download`;
 
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     headers: {
       'Authorization': `Bearer ${token}`,
     },
   });
+
+  if (response.status === 401) {
+    const refreshed = await refreshAuthToken();
+    if (refreshed) {
+      token = getToken();
+      response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+    }
+  }
 
   if (!response.ok) {
     throw new Error('Failed to download document');

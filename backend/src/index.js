@@ -11,6 +11,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 
 // Import route handlers
@@ -41,14 +42,61 @@ const app = express();
 // Middleware are functions that run on every request before your route handlers.
 // They can modify the request, add security headers, parse JSON, etc.
 
+const isProduction = process.env.NODE_ENV === 'production';
+const rawAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS || '';
+const allowedOrigins = rawAllowedOrigins
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+
 // Security headers (protects against common web vulnerabilities)
 app.use(helmet({
-  contentSecurityPolicy: false, // Disable for now since we're serving React
+  contentSecurityPolicy: isProduction
+    ? {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'blob:'],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'", 'data:'],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          frameAncestors: ["'none'"],
+          upgradeInsecureRequests: [],
+        },
+      }
+    : false,
 }));
 
 // Enable CORS (allows frontend to talk to backend)
-// In production, you'd restrict this to your domain
-app.use(cors());
+app.use(cors({
+  origin: (origin, callback) => {
+    // Non-browser clients or same-origin requests won't send Origin
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // Keep permissive mode only in development
+    if (!isProduction) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error('Not allowed by CORS'));
+  },
+}));
+
+const authRateLimiter = rateLimit({
+  windowMs: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS || `${15 * 60 * 1000}`, 10),
+  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '10', 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many authentication attempts. Please try again later.' },
+});
 
 // Parse JSON request bodies
 // This allows us to read JSON data sent from the frontend
@@ -87,7 +135,7 @@ app.get('/api/health', async (req, res) => {
 
 // Mount route handlers
 // Auth routes are NOT protected (need to login first!)
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authRateLimiter, authRoutes);
 
 // All other routes require authentication
 app.use('/api/engagements', requireAuth, engagementRoutes);
