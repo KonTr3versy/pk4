@@ -6,7 +6,8 @@ function createMockDb() {
     engagements: [],
     techniques: [],
     approvals: [],
-    engagementRoles: []
+    engagementRoles: [],
+    actionItems: []
   };
 
   const normalize = (text) => text.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -78,8 +79,13 @@ function createMockDb() {
       return { rows: [{ id: deleted.id }] };
     }
 
-    if (sql.includes('select id, status, name from engagements where id = $1') || sql.includes('select * from engagements where id = $1')) {
+    if (sql.includes('select id, status, name from engagements where id = $1') || sql.includes('select id, status from engagements where id = $1') || sql.includes('select * from engagements where id = $1')) {
       return { rows: state.engagements.filter((e) => e.id === params[0]) };
+    }
+
+    if (sql.includes('select id from engagement_roles') && sql.includes('limit 1')) {
+      const rows = state.engagementRoles.filter((r) => r.engagement_id === params[0] && r.user_id === params[1]).slice(0, 1).map((r) => ({ id: r.id || randomUUID() }));
+      return { rows };
     }
 
     if (sql.includes('select role from engagement_roles')) {
@@ -132,6 +138,27 @@ function createMockDb() {
       if (!technique) return { rows: [] };
       if (sql.includes('status = $1')) technique.status = params[0];
       return { rows: [technique] };
+    }
+
+    if (sql.includes('select ai.id, ai.engagement_id') && sql.includes('from action_items ai') && sql.includes('where ai.id = $1')) {
+      const actionItem = state.actionItems.find((ai) => ai.id === params[0]);
+      return { rows: actionItem ? [{ id: actionItem.id, engagement_id: actionItem.engagement_id }] : [] };
+    }
+
+    if (sql.includes('update action_items') && sql.includes('returning *')) {
+      const id = params[params.length - 1];
+      const actionItem = state.actionItems.find((ai) => ai.id === id);
+      if (!actionItem) return { rows: [] };
+      if (sql.includes('title = $1')) actionItem.title = params[0];
+      if (sql.includes('status = $1')) actionItem.status = params[0];
+      return { rows: [actionItem] };
+    }
+
+    if (sql.includes('delete from action_items where id = $1 returning id')) {
+      const idx = state.actionItems.findIndex((ai) => ai.id === params[0]);
+      if (idx === -1) return { rows: [] };
+      const [deleted] = state.actionItems.splice(idx, 1);
+      return { rows: [{ id: deleted.id }] };
     }
 
     if (sql.includes('from techniques t left join detection_outcomes') && sql.includes('where t.id = $1')) {

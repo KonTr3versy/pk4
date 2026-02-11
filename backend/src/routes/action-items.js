@@ -66,10 +66,62 @@ async function verifyEngagementAccess(req, res, next) {
     }
 
     req.engagement = result.rows[0];
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    if (req.user?.role === 'admin') {
+      return next();
+    }
+
+    const accessCheck = await db.query(
+      `SELECT id FROM engagement_roles
+       WHERE engagement_id = $1 AND user_id = $2
+       LIMIT 1`,
+      [id, userId]
+    );
+
+    if (accessCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
     next();
   } catch (error) {
     console.error('Error verifying engagement access:', error);
     res.status(500).json({ error: 'Failed to verify engagement access' });
+  }
+}
+
+async function verifyActionItemAccess(req, res, next) {
+  const { itemId } = req.params;
+
+  if (!isValidUUID(itemId)) {
+    return res.status(400).json({ error: 'Invalid item ID format' });
+  }
+
+  try {
+    const itemResult = await db.query(
+      `SELECT ai.id, ai.engagement_id
+       FROM action_items ai
+       INNER JOIN engagements e ON e.id = ai.engagement_id
+       WHERE ai.id = $1`,
+      [itemId]
+    );
+
+    if (itemResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Action item not found' });
+    }
+
+    req.actionItem = itemResult.rows[0];
+    req.engagement = { id: req.actionItem.engagement_id };
+
+    req.params.id = req.actionItem.engagement_id;
+    return verifyEngagementAccess(req, res, next);
+  } catch (error) {
+    console.error('Error verifying action item access:', error);
+    return res.status(500).json({ error: 'Failed to verify action item access' });
   }
 }
 
@@ -224,7 +276,7 @@ router.post('/:id', verifyEngagementAccess, async (req, res) => {
 
 // PUT /api/action-items/item/:itemId
 // Update an action item
-router.put('/item/:itemId', async (req, res) => {
+router.put('/item/:itemId', verifyActionItemAccess, async (req, res) => {
   try {
     const { itemId } = req.params;
     const {
@@ -237,10 +289,6 @@ router.put('/item/:itemId', async (req, res) => {
       status,
       retest_required
     } = req.body;
-
-    if (!isValidUUID(itemId)) {
-      return res.status(400).json({ error: 'Invalid item ID format' });
-    }
 
     // Build dynamic update
     const updates = [];
@@ -314,7 +362,7 @@ router.put('/item/:itemId', async (req, res) => {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    values.push(itemId);
+    values.push(req.actionItem.id);
 
     const result = await db.query(
       `UPDATE action_items
@@ -337,17 +385,13 @@ router.put('/item/:itemId', async (req, res) => {
 
 // DELETE /api/action-items/item/:itemId
 // Delete an action item
-router.delete('/item/:itemId', async (req, res) => {
+router.delete('/item/:itemId', verifyActionItemAccess, async (req, res) => {
   try {
     const { itemId } = req.params;
 
-    if (!isValidUUID(itemId)) {
-      return res.status(400).json({ error: 'Invalid item ID format' });
-    }
-
     const result = await db.query(
       'DELETE FROM action_items WHERE id = $1 RETURNING id',
-      [itemId]
+      [req.actionItem.id]
     );
 
     if (result.rows.length === 0) {
