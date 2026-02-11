@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Target, Users, Table, Server, Monitor, CheckSquare,
-  FileText, AlertTriangle, Shield, ChevronLeft, Settings
+  FileText, AlertTriangle, Shield, ChevronLeft, Settings, BarChart3
 } from 'lucide-react';
 import * as api from '../../api/client';
 
@@ -16,6 +16,7 @@ import DocumentGenerator from './DocumentGenerator';
 import DocumentHistory from './DocumentHistory';
 import ActionItemsPanel from './ActionItemsPanel';
 import BlueTeamResults from './BlueTeamResults';
+import AnalyticsReadiness from './AnalyticsReadiness';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: Settings },
@@ -27,6 +28,7 @@ const TABS = [
   { id: 'approvals', label: 'Approvals', icon: CheckSquare },
   { id: 'documents', label: 'Documents', icon: FileText },
   { id: 'results', label: 'Results', icon: Shield },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'actions', label: 'Actions', icon: AlertTriangle }
 ];
 
@@ -205,6 +207,13 @@ export default function PlanningWorkflow({ engagement, onBack, onUpdate }) {
           <BlueTeamResults
             engagementId={engagement.id}
             onUpdate={onUpdate}
+          />
+        );
+
+      case 'analytics':
+        return (
+          <AnalyticsReadiness
+            engagementId={engagement.id}
           />
         );
 

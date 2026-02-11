@@ -807,7 +807,7 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_engagement_metrics_engagement ON engagement_metrics(engagement_id);`,
 
   // ==========================================================================
-  // ANALYTICS: ENGAGEMENT TOOL EFFICACY
+  // ANALYTICS: ENGAGEMENT TOOL EFFICACY (INTENTIONALLY PARKED - schema-first, no release routes yet)
   // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS engagement_tool_efficacy (
@@ -864,7 +864,7 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_metric_snapshots_date ON metric_snapshots(snapshot_date);`,
 
   // ==========================================================================
-  // ANALYTICS: ATT&CK COVERAGE TRACKING
+  // ANALYTICS: ATT&CK COVERAGE TRACKING (NEAR-TERM READ RELEASE)
   // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS attack_coverage (
@@ -904,7 +904,7 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_attack_coverage_status ON attack_coverage(coverage_status);`,
 
   // ==========================================================================
-  // ANALYTICS: DETECTION RULES LIBRARY
+  // ANALYTICS: DETECTION RULES LIBRARY (NEAR-TERM READ RELEASE)
   // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS detection_rules (
@@ -973,7 +973,7 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_finding_detection_rules_rule ON finding_detection_rules(detection_rule_id);`,
 
   // ==========================================================================
-  // ANALYTICS: RISK PARAMETERS (FAIR-aligned)
+  // ANALYTICS: RISK PARAMETERS (FAIR-aligned, INTENTIONALLY PARKED)
   // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS risk_parameters (
@@ -1062,7 +1062,7 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_finding_risk_action ON finding_risk_quantification(action_item_id);`,
 
   // ==========================================================================
-  // ANALYTICS: ENGAGEMENT RISK SUMMARY
+  // ANALYTICS: ENGAGEMENT RISK SUMMARY (INTENTIONALLY PARKED)
   // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS engagement_risk_summary (
@@ -1097,7 +1097,7 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_engagement_risk_engagement ON engagement_risk_summary(engagement_id);`,
 
   // ==========================================================================
-  // ANALYTICS: AI-GENERATED CONTENT
+  // ANALYTICS: AI-GENERATED CONTENT (INTENTIONALLY PARKED)
   // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS ai_generated_content (
@@ -1141,7 +1141,7 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_ai_content_status ON ai_generated_content(status);`,
 
   // ==========================================================================
-  // ANALYTICS: BENCHMARK OPT-IN
+  // ANALYTICS: BENCHMARK OPT-IN (INTENTIONALLY PARKED)
   // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS benchmark_opt_in (
@@ -1163,7 +1163,7 @@ const migrations = [
   `,
 
   // ==========================================================================
-  // ANALYTICS: BENCHMARK DATA (Anonymized)
+  // ANALYTICS: BENCHMARK DATA (Anonymized, INTENTIONALLY PARKED)
   // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS benchmark_data (
@@ -1187,7 +1187,7 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_benchmark_data_technique ON benchmark_data(technique_id);`,
 
   // ==========================================================================
-  // ANALYTICS: INDUSTRY BENCHMARKS (Aggregated)
+  // ANALYTICS: INDUSTRY BENCHMARKS (Aggregated, INTENTIONALLY PARKED)
   // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS industry_benchmarks (
