@@ -742,3 +742,15 @@ export async function saveTechniqueResult(engagementId, data) {
     body: JSON.stringify(data),
   });
 }
+
+// =============================================================================
+// ANALYTICS (THIN READ)
+// =============================================================================
+
+export async function getCoverageSummary(engagementId) {
+  return apiRequest(`/analytics/${engagementId}/coverage-summary`);
+}
+
+export async function getDetectionRules(engagementId) {
+  return apiRequest(`/analytics/${engagementId}/detection-rules`);
+}

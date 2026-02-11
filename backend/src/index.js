@@ -25,6 +25,7 @@ const workflowRoutes = require('./routes/workflow');
 const approvalRoutes = require('./routes/approvals');
 const documentRoutes = require('./routes/documents');
 const actionItemRoutes = require('./routes/action-items');
+const analyticsRoutes = require('./routes/analytics');
 
 // Import middleware
 const { requireAuth } = require('./middleware/auth');
@@ -100,6 +101,7 @@ app.use('/api/workflow', requireAuth, workflowRoutes);
 app.use('/api/approvals', requireAuth, approvalRoutes);
 app.use('/api/documents', requireAuth, documentRoutes);
 app.use('/api/action-items', requireAuth, actionItemRoutes);
+app.use('/api/analytics', requireAuth, analyticsRoutes);
 
 // =============================================================================
 // SERVE FRONTEND (Production)
