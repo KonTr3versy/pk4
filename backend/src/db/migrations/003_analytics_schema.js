@@ -1,9 +1,96 @@
-/**
- * Database migration runner.
- *
- * Executes ordered migration files from ./migrations and records applied versions.
- */
-require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+module.exports = [
+  `ALTER TABLE engagements ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);`,
+  `
+    CREATE TABLE IF NOT EXISTS security_tools (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+      name VARCHAR(100) NOT NULL,
+      category VARCHAR(30) NOT NULL,
+      vendor VARCHAR(100),
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+      CONSTRAINT valid_tool_category CHECK (category IN (
+        'edr', 'siem', 'email_gateway', 'firewall', 'ndr', 'waf', 'casb', 'iam', 'av', 'dlp', 'proxy', 'other'
+      )),
+      CONSTRAINT unique_org_tool_name UNIQUE (organization_id, name)
+    );
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_security_tools_org ON security_tools(organization_id);`,
+  `
+    CREATE TABLE IF NOT EXISTS technique_tool_outcomes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      technique_id UUID REFERENCES techniques(id) ON DELETE CASCADE,
+      security_tool_id UUID REFERENCES security_tools(id) ON DELETE CASCADE,
+
+      outcome VARCHAR(30) NOT NULL,
+      alert_name VARCHAR(255),
+      alert_id VARCHAR(100),
+      alert_severity VARCHAR(20),
+      response_time_seconds INTEGER,
+      detection_logic TEXT,
+      notes TEXT,
+
+      recorded_by UUID REFERENCES users(id),
+      recorded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+      CONSTRAINT valid_tool_outcome CHECK (outcome IN (
+        'blocked', 'alerted_high', 'alerted_medium', 'alerted_low',
+        'logged_central', 'logged_local', 'not_detected', 'not_applicable'
+      )),
+      CONSTRAINT unique_technique_tool UNIQUE (technique_id, security_tool_id)
+    );
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_technique_tool_outcomes_technique ON technique_tool_outcomes(technique_id);`,
+  `CREATE INDEX IF NOT EXISTS idx_technique_tool_outcomes_tool ON technique_tool_outcomes(security_tool_id);`,
+  `
+    CREATE TABLE IF NOT EXISTS outcome_weights (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+      outcome VARCHAR(30) NOT NULL,
+      weight DECIMAL(3,2) NOT NULL,
+
+      CONSTRAINT unique_org_outcome UNIQUE (organization_id, outcome)
+    );
+  `,
+  `
+    INSERT INTO outcome_weights (organization_id, outcome, weight) VALUES
+      (NULL, 'blocked', 1.0),
+      (NULL, 'alerted_high', 0.9),
+      (NULL, 'alerted_medium', 0.75),
+      (NULL, 'alerted_low', 0.6),
+      (NULL, 'logged_central', 0.4),
+      (NULL, 'logged_local', 0.2),
+      (NULL, 'not_detected', 0.0)
+    ON CONFLICT DO NOTHING;
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS engagement_metrics (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      engagement_id UUID REFERENCES engagements(id) ON DELETE CASCADE,
+
+      -- Counts
+      total_techniques INTEGER NOT NULL,
+      techniques_blocked INTEGER DEFAULT 0,
+      techniques_alerted INTEGER DEFAULT 0,
+      techniques_logged_only INTEGER DEFAULT 0,
+      techniques_not_detected INTEGER DEFAULT 0,
+
+      -- Scores (0-100)
+      threat_resilience_score DECIMAL(5,2),
+      prevention_rate DECIMAL(5,2),
+      detection_rate DECIMAL(5,2),
+      visibility_rate DECIMAL(5,2),
+
+      -- Timing (seconds)
+      avg_time_to_detect INTEGER,
+      median_time_to_detect INTEGER,
+      min_time_to_detect INTEGER,
+      max_time_to_detect INTEGER,
+      avg_time_to_investigate INTEGER,
+
+      -- Per-tactic breakdown (JSONB)
+      tactic_scores JSONB,
 
       -- Per-tool breakdown (JSONB)
       tool_scores JSONB,
@@ -13,12 +100,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       CONSTRAINT unique_engagement_metrics UNIQUE (engagement_id)
     );
   `,
-
   `CREATE INDEX IF NOT EXISTS idx_engagement_metrics_engagement ON engagement_metrics(engagement_id);`,
-
-  // ==========================================================================
-  // ANALYTICS: ENGAGEMENT TOOL EFFICACY (INTENTIONALLY PARKED - schema-first, no release routes yet)
-  // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS engagement_tool_efficacy (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -37,13 +119,8 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       CONSTRAINT unique_engagement_tool_efficacy UNIQUE (engagement_id, security_tool_id)
     );
   `,
-
   `CREATE INDEX IF NOT EXISTS idx_engagement_tool_efficacy_engagement ON engagement_tool_efficacy(engagement_id);`,
   `CREATE INDEX IF NOT EXISTS idx_engagement_tool_efficacy_tool ON engagement_tool_efficacy(security_tool_id);`,
-
-  // ==========================================================================
-  // ANALYTICS: METRIC SNAPSHOTS (Historical Trending)
-  // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS metric_snapshots (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -69,13 +146,8 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
   `,
-
   `CREATE INDEX IF NOT EXISTS idx_metric_snapshots_org ON metric_snapshots(organization_id);`,
   `CREATE INDEX IF NOT EXISTS idx_metric_snapshots_date ON metric_snapshots(snapshot_date);`,
-
-  // ==========================================================================
-  // ANALYTICS: ATT&CK COVERAGE TRACKING (NEAR-TERM READ RELEASE)
-  // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS attack_coverage (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -108,14 +180,9 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       CONSTRAINT unique_org_technique_coverage UNIQUE (organization_id, technique_id)
     );
   `,
-
   `CREATE INDEX IF NOT EXISTS idx_attack_coverage_org ON attack_coverage(organization_id);`,
   `CREATE INDEX IF NOT EXISTS idx_attack_coverage_technique ON attack_coverage(technique_id);`,
   `CREATE INDEX IF NOT EXISTS idx_attack_coverage_status ON attack_coverage(coverage_status);`,
-
-  // ==========================================================================
-  // ANALYTICS: DETECTION RULES LIBRARY (NEAR-TERM READ RELEASE)
-  // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS detection_rules (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -150,13 +217,8 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       CONSTRAINT valid_rule_severity CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info'))
     );
   `,
-
   `CREATE INDEX IF NOT EXISTS idx_detection_rules_technique ON detection_rules(technique_id);`,
   `CREATE INDEX IF NOT EXISTS idx_detection_rules_type ON detection_rules(rule_type);`,
-
-  // ==========================================================================
-  // ANALYTICS: FINDING DETECTION RULES (Link findings to rules)
-  // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS finding_detection_rules (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -178,13 +240,8 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       CONSTRAINT unique_finding_rule UNIQUE (action_item_id, detection_rule_id)
     );
   `,
-
   `CREATE INDEX IF NOT EXISTS idx_finding_detection_rules_action ON finding_detection_rules(action_item_id);`,
   `CREATE INDEX IF NOT EXISTS idx_finding_detection_rules_rule ON finding_detection_rules(detection_rule_id);`,
-
-  // ==========================================================================
-  // ANALYTICS: RISK PARAMETERS (FAIR-aligned, INTENTIONALLY PARKED)
-  // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS risk_parameters (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -209,10 +266,6 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       CONSTRAINT unique_org_risk_params UNIQUE (organization_id)
     );
   `,
-
-  // ==========================================================================
-  // ANALYTICS: FINDING RISK QUANTIFICATION (FAIR model)
-  // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS finding_risk_quantification (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -268,12 +321,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       CONSTRAINT unique_finding_risk UNIQUE (action_item_id)
     );
   `,
-
   `CREATE INDEX IF NOT EXISTS idx_finding_risk_action ON finding_risk_quantification(action_item_id);`,
-
-  // ==========================================================================
-  // ANALYTICS: ENGAGEMENT RISK SUMMARY (INTENTIONALLY PARKED)
-  // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS engagement_risk_summary (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -303,12 +351,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       CONSTRAINT unique_engagement_risk UNIQUE (engagement_id)
     );
   `,
-
   `CREATE INDEX IF NOT EXISTS idx_engagement_risk_engagement ON engagement_risk_summary(engagement_id);`,
-
-  // ==========================================================================
-  // ANALYTICS: AI-GENERATED CONTENT (INTENTIONALLY PARKED)
-  // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS ai_generated_content (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -345,14 +388,9 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       CONSTRAINT valid_ai_status CHECK (status IN ('draft', 'approved', 'rejected', 'edited'))
     );
   `,
-
   `CREATE INDEX IF NOT EXISTS idx_ai_content_engagement ON ai_generated_content(engagement_id);`,
   `CREATE INDEX IF NOT EXISTS idx_ai_content_action_item ON ai_generated_content(action_item_id);`,
   `CREATE INDEX IF NOT EXISTS idx_ai_content_status ON ai_generated_content(status);`,
-
-  // ==========================================================================
-  // ANALYTICS: BENCHMARK OPT-IN (INTENTIONALLY PARKED)
-  // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS benchmark_opt_in (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -371,10 +409,6 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       CONSTRAINT unique_org_benchmark UNIQUE (organization_id)
     );
   `,
-
-  // ==========================================================================
-  // ANALYTICS: BENCHMARK DATA (Anonymized, INTENTIONALLY PARKED)
-  // ==========================================================================
   `
     CREATE TABLE IF NOT EXISTS benchmark_data (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -384,72 +418,38 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
       employee_range VARCHAR(20),
       region VARCHAR(50),
 
-const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
+      -- Technique results (no org identifier)
+      technique_id VARCHAR(20),
+      outcome VARCHAR(30),
+      time_to_detect_seconds INTEGER,
 
-async function ensureMigrationsTable() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      version VARCHAR(255) PRIMARY KEY,
-      applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      contributed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
-  `);
-}
-
-  // ==========================================================================
-  // ANALYTICS: INDUSTRY BENCHMARKS (Aggregated, INTENTIONALLY PARKED)
-  // ==========================================================================
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_benchmark_data_industry ON benchmark_data(industry);`,
+  `CREATE INDEX IF NOT EXISTS idx_benchmark_data_technique ON benchmark_data(technique_id);`,
   `
     CREATE TABLE IF NOT EXISTS industry_benchmarks (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
-async function getAppliedMigrations() {
-  const result = await db.query('SELECT version FROM schema_migrations');
-  return new Set(result.rows.map((row) => row.version));
-}
+      industry VARCHAR(50) NOT NULL,
+      technique_id VARCHAR(20) NOT NULL,
 
-async function runMigration(version, statements) {
-  const client = await db.getClient();
+      sample_size INTEGER,
+      detection_rate DECIMAL(5,2),
+      prevention_rate DECIMAL(5,2),
+      avg_ttd_seconds INTEGER,
+      median_ttd_seconds INTEGER,
 
-  try {
-    await client.query('BEGIN');
+      percentile_25 DECIMAL(5,2),
+      percentile_50 DECIMAL(5,2),
+      percentile_75 DECIMAL(5,2),
 
-    for (const statement of statements) {
-      await client.query(statement);
-    }
+      last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
-    await client.query('INSERT INTO schema_migrations (version) VALUES ($1)', [version]);
-    await client.query('COMMIT');
-    console.log(`✅ Applied migration: ${version}`);
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-async function migrate() {
-  try {
-    await ensureMigrationsTable();
-    const applied = await getAppliedMigrations();
-    const files = loadMigrationFiles();
-
-    for (const file of files) {
-      if (applied.has(file)) {
-        console.log(`⏭️  Skipping already applied migration: ${file}`);
-        continue;
-      }
-
-      const statements = require(path.join(MIGRATIONS_DIR, file));
-      await runMigration(file, statements);
-    }
-
-    console.log('✅ Migrations complete');
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ Migration failed:', error.message);
-    process.exit(1);
-  }
-}
-
-migrate();
+      CONSTRAINT unique_industry_technique UNIQUE (industry, technique_id)
+    );
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_industry_benchmarks_industry ON industry_benchmarks(industry);`,
+  `CREATE INDEX IF NOT EXISTS idx_industry_benchmarks_technique ON industry_benchmarks(technique_id);`
+];
