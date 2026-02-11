@@ -33,7 +33,7 @@ export default function PlanApprovals({ engagementId, currentUserId, onUpdate, o
         api.getEngagementApprovals(engagementId),
         api.getEngagementWorkflowStatus(engagementId)
       ]);
-      setApprovals(approvalsData || []);
+      setApprovals(approvalsData?.approvals || []);
       setWorkflowStatus(statusData);
     } catch (err) {
       setError('Failed to load approvals');
@@ -50,7 +50,7 @@ export default function PlanApprovals({ engagementId, currentUserId, onUpdate, o
       setSubmitting(true);
       await api.submitApproval(engagementId, {
         role: approvalData.role,
-        approved: approvalData.approved,
+        signature_text: approvalData.approved ? 'Approved' : 'Rejected',
         comments: approvalData.comments
       });
       await loadData();
@@ -71,7 +71,7 @@ export default function PlanApprovals({ engagementId, currentUserId, onUpdate, o
   function getApprovalStatus(roleId) {
     const approval = getApprovalForRole(roleId);
     if (!approval) return 'pending';
-    return approval.approved ? 'approved' : 'rejected';
+    return approval.approved_at ? 'approved' : 'rejected';
   }
 
   function getStatusStyle(status) {
@@ -195,7 +195,7 @@ export default function PlanApprovals({ engagementId, currentUserId, onUpdate, o
               key={approval.id}
               className="flex items-start gap-3 p-3 bg-gray-800 rounded-lg text-sm"
             >
-              {approval.approved ? (
+              {approval.approved_at ? (
                 <Check className="w-5 h-5 text-green-400 mt-0.5" />
               ) : (
                 <X className="w-5 h-5 text-red-400 mt-0.5" />
@@ -204,7 +204,7 @@ export default function PlanApprovals({ engagementId, currentUserId, onUpdate, o
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{approval.user_name || 'Unknown'}</span>
                   <span className="text-gray-500">
-                    {approval.approved ? 'approved' : 'rejected'} as {approval.role}
+                    {approval.approved_at ? 'approved' : 'rejected'} as {approval.role}
                   </span>
                 </div>
                 {approval.comments && (

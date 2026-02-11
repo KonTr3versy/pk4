@@ -24,7 +24,7 @@ export default function ActionItemsPanel({ engagementId, onUpdate }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [filter, setFilter] = useState({ status: '', severity: '' });
+  const [filter, setFilter] = useState({ status: '', severity: '', owner_id: '' });
   const [newItem, setNewItem] = useState({
     title: '',
     description: '',
@@ -44,7 +44,7 @@ export default function ActionItemsPanel({ engagementId, onUpdate }) {
         api.getActionItems(engagementId, filter),
         api.getUsers()
       ]);
-      setItems(itemsData || []);
+      setItems(itemsData?.items || []);
       setUsers(usersData || []);
     } catch (err) {
       setError('Failed to load action items');
