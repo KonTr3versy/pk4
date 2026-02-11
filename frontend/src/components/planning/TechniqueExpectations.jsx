@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Loader2, Save, Eye, AlertTriangle, HelpCircle } from 'lucide-react';
+import { Table, Loader2, Eye, AlertTriangle, HelpCircle } from 'lucide-react';
 import * as api from '../../api/client';
 
 const VISIBILITY_OPTIONS = [
-  { id: 'not_blocked', label: 'Not Blocked', color: 'red', description: 'Attack will succeed' },
-  { id: 'may_log', label: 'May Log', color: 'yellow', description: 'Telemetry expected' },
-  { id: 'may_alert', label: 'May Alert', color: 'green', description: 'Alert expected' },
-  { id: 'unknown', label: 'Unknown', color: 'gray', description: 'Not yet assessed' }
+  { id: 'not_blocked', label: 'Not Blocked', color: 'red' },
+  { id: 'may_log', label: 'May Log', color: 'yellow' },
+  { id: 'may_alert', label: 'May Alert', color: 'green' },
+  { id: 'unknown', label: 'Unknown', color: 'gray' }
 ];
 
 const TEAMS = ['soc', 'hunt', 'dfir'];
@@ -26,19 +26,15 @@ export default function TechniqueExpectations({ engagementId, onUpdate }) {
   async function loadData() {
     try {
       setLoading(true);
-      const [techData, expectData] = await Promise.all([
-        api.getTechniques(engagementId),
-        api.getTechniqueExpectations(engagementId)
-      ]);
+      const techData = await api.getTechniques(engagementId);
       setTechniques(techData || []);
 
-      // Convert array to lookup object
-      const expectMap = {};
-      (expectData || []).forEach(e => {
-        const key = `${e.engagement_technique_id}-${e.team}`;
-        expectMap[key] = e;
-      });
-      setExpectations(expectMap);
+      const expectEntries = await Promise.all((techData || []).map(async (technique) => {
+        const expectation = await api.getTechniqueExpectations(engagementId, technique.id);
+        return [technique.id, expectation || {}];
+      }));
+
+      setExpectations(Object.fromEntries(expectEntries));
     } catch (err) {
       setError('Failed to load data');
       console.error(err);
@@ -47,43 +43,34 @@ export default function TechniqueExpectations({ engagementId, onUpdate }) {
     }
   }
 
-  async function handleUpdateExpectation(techniqueId, team, field, value) {
-    const key = `${techniqueId}-${team}`;
-    const current = expectations[key] || {
-      engagement_technique_id: techniqueId,
-      team,
-      expected_visibility: 'unknown',
-      expected_data_sources: '',
-      notes: ''
-    };
-
+  async function handleUpdateExpectation(techniqueId, team, value) {
+    const field = `${team}_visibility`;
+    const current = expectations[techniqueId] || { classification: 'unknown', expected_data_sources: [] };
     const updated = { ...current, [field]: value };
 
-    // Optimistically update UI
-    setExpectations(prev => ({ ...prev, [key]: updated }));
-    setSaving(prev => ({ ...prev, [key]: true }));
+    setExpectations(prev => ({ ...prev, [techniqueId]: updated }));
+    setSaving(prev => ({ ...prev, [techniqueId]: true }));
 
     try {
-      await api.saveTechniqueExpectation(engagementId, {
-        engagement_technique_id: techniqueId,
-        team,
-        expected_visibility: updated.expected_visibility,
-        expected_data_sources: updated.expected_data_sources,
-        notes: updated.notes
-      });
+      try {
+        await api.saveTechniqueExpectation(engagementId, techniqueId, updated, 'POST');
+      } catch (postError) {
+        if (!String(postError?.message || '').includes('409')) {
+          throw postError;
+        }
+        await api.saveTechniqueExpectation(engagementId, techniqueId, updated, 'PUT');
+      }
       onUpdate?.();
     } catch (err) {
       setError('Failed to save expectation');
-      // Revert on error
       loadData();
     } finally {
-      setSaving(prev => ({ ...prev, [key]: false }));
+      setSaving(prev => ({ ...prev, [techniqueId]: false }));
     }
   }
 
-  function getExpectation(techniqueId, team) {
-    const key = `${techniqueId}-${team}`;
-    return expectations[key] || { expected_visibility: 'unknown' };
+  function getExpectation(techniqueId) {
+    return expectations[techniqueId] || { classification: 'unknown' };
   }
 
   function getVisibilityStyle(visibility) {
@@ -123,7 +110,6 @@ export default function TechniqueExpectations({ engagementId, onUpdate }) {
         </div>
       )}
 
-      {/* Legend */}
       <div className="flex flex-wrap gap-2 p-3 bg-gray-800 rounded-lg">
         {VISIBILITY_OPTIONS.map(opt => (
           <div
@@ -158,51 +144,54 @@ export default function TechniqueExpectations({ engagementId, onUpdate }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
-              {techniques.map(technique => (
-                <tr key={technique.id} className="hover:bg-gray-800/30">
-                  <td className="px-3 py-3">
-                    <div className="font-medium">{technique.technique_name}</div>
-                    <div className="text-xs text-gray-500">{technique.technique_id}</div>
-                  </td>
-                  {TEAMS.map(team => {
-                    const exp = getExpectation(technique.id, team);
-                    const key = `${technique.id}-${team}`;
-                    const isSaving = saving[key];
+              {techniques.map(technique => {
+                const exp = getExpectation(technique.id);
+                const isSaving = saving[technique.id];
 
-                    return (
-                      <td key={team} className="px-2 py-2 text-center">
-                        <div className="relative inline-block">
-                          <select
-                            value={exp.expected_visibility}
-                            onChange={(e) => handleUpdateExpectation(technique.id, team, 'expected_visibility', e.target.value)}
-                            className={`px-2 py-1 rounded border text-xs appearance-none cursor-pointer ${getVisibilityStyle(exp.expected_visibility)} ${isSaving ? 'opacity-50' : ''}`}
-                            disabled={isSaving}
-                          >
-                            {VISIBILITY_OPTIONS.map(opt => (
-                              <option key={opt.id} value={opt.id}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                          {isSaving && (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+                return (
+                  <tr key={technique.id} className="hover:bg-gray-800/30">
+                    <td className="px-3 py-3">
+                      <div className="font-medium">{technique.technique_name}</div>
+                      <div className="text-xs text-gray-500">{technique.technique_id}</div>
+                    </td>
+                    {TEAMS.map(team => {
+                      const field = `${team}_visibility`;
+                      const value = exp[field] || 'unknown';
+
+                      return (
+                        <td key={team} className="px-2 py-2 text-center">
+                          <div className="relative inline-block">
+                            <select
+                              value={value}
+                              onChange={(e) => handleUpdateExpectation(technique.id, team, e.target.value)}
+                              className={`px-2 py-1 rounded border text-xs appearance-none cursor-pointer ${getVisibilityStyle(value)} ${isSaving ? 'opacity-50' : ''}`}
+                              disabled={isSaving}
+                            >
+                              {VISIBILITY_OPTIONS.map(opt => (
+                                <option key={opt.id} value={opt.id}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                            {isSaving && (
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
       <div className="text-xs text-gray-500 p-3 bg-gray-800/50 rounded-lg">
-        <strong>Tip:</strong> Use this matrix during table top exercises to set expectations
-        before execution. Compare with actual results after the engagement.
+        <strong>Tip:</strong> Use this matrix during table top exercises to set expectations before execution.
       </div>
     </div>
   );

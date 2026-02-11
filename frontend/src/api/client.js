@@ -8,6 +8,29 @@
 
 const API_BASE = '/api';
 
+
+// =============================================================================
+// ROUTE CONTRACT MAP - keep in sync with backend/src/routes/*.js
+// =============================================================================
+
+export const API_ROUTE_CONTRACT = Object.freeze({
+  workflow: Object.freeze({
+    getTechniqueExpectations: '/workflow/:engagementId/techniques/:techId/expectations',
+    saveTechniqueExpectation: '/workflow/:engagementId/techniques/:techId/expectations',
+  }),
+  approvals: Object.freeze({
+    updateEngagementStatus: '/approvals/:engagementId/transition',
+    getEngagementWorkflowStatus: '/approvals/:engagementId',
+  }),
+  actionItems: Object.freeze({
+    list: '/action-items/:engagementId',
+    update: '/action-items/item/:itemId',
+    delete: '/action-items/item/:itemId',
+    getTechniqueResults: '/action-items/:engagementId/techniques/:techId/results',
+    saveTechniqueResult: '/action-items/:engagementId/techniques/:techId/results',
+  }),
+});
+
 /**
  * Get the stored auth token
  */
@@ -549,13 +572,13 @@ export async function deleteEngagementRole(engagementId, roleId) {
 }
 
 // Expectations (Table Top Matrix)
-export async function getTechniqueExpectations(engagementId) {
-  return apiRequest(`/workflow/${engagementId}/expectations`);
+export async function getTechniqueExpectations(engagementId, techId) {
+  return apiRequest(`/workflow/${engagementId}/techniques/${techId}/expectations`);
 }
 
-export async function saveTechniqueExpectation(engagementId, data) {
-  return apiRequest(`/workflow/${engagementId}/expectations`, {
-    method: 'POST',
+export async function saveTechniqueExpectation(engagementId, techId, data, method = 'POST') {
+  return apiRequest(`/workflow/${engagementId}/techniques/${techId}/expectations`, {
+    method,
     body: JSON.stringify(data),
   });
 }
@@ -637,14 +660,14 @@ export async function submitApproval(engagementId, data) {
 }
 
 export async function updateEngagementStatus(engagementId, newStatus) {
-  return apiRequest(`/approvals/${engagementId}/status`, {
-    method: 'PATCH',
-    body: JSON.stringify({ status: newStatus }),
+  return apiRequest(`/approvals/${engagementId}/transition`, {
+    method: 'POST',
+    body: JSON.stringify({ target_status: newStatus }),
   });
 }
 
 export async function getEngagementWorkflowStatus(engagementId) {
-  return apiRequest(`/approvals/${engagementId}/workflow-status`);
+  return apiRequest(`/approvals/${engagementId}`);
 }
 
 // =============================================================================
@@ -718,27 +741,39 @@ export async function createActionItem(engagementId, data) {
   });
 }
 
-export async function updateActionItem(engagementId, itemId, data) {
-  return apiRequest(`/action-items/${engagementId}/${itemId}`, {
+export async function updateActionItem(_engagementId, itemId, data) {
+  return apiRequest(`/action-items/item/${itemId}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
 }
 
-export async function deleteActionItem(engagementId, itemId) {
-  return apiRequest(`/action-items/${engagementId}/${itemId}`, {
+export async function deleteActionItem(_engagementId, itemId) {
+  return apiRequest(`/action-items/item/${itemId}`, {
     method: 'DELETE',
   });
 }
 
 // Blue Team Results
-export async function getTechniqueResults(engagementId) {
-  return apiRequest(`/action-items/${engagementId}/results`);
+export async function getTechniqueResults(engagementId, techId) {
+  return apiRequest(`/action-items/${engagementId}/techniques/${techId}/results`);
 }
 
-export async function saveTechniqueResult(engagementId, data) {
-  return apiRequest(`/action-items/${engagementId}/results`, {
+export async function saveTechniqueResult(engagementId, techId, data) {
+  return apiRequest(`/action-items/${engagementId}/techniques/${techId}/results`, {
     method: 'POST',
     body: JSON.stringify(data),
   });
+}
+
+// =============================================================================
+// ANALYTICS (THIN READ)
+// =============================================================================
+
+export async function getCoverageSummary(engagementId) {
+  return apiRequest(`/analytics/${engagementId}/coverage-summary`);
+}
+
+export async function getDetectionRules(engagementId) {
+  return apiRequest(`/analytics/${engagementId}/detection-rules`);
 }

@@ -81,7 +81,8 @@ async function verifyEngagementAccess(req, res, next) {
 // Get all action items for an engagement
 router.get('/:id', verifyEngagementAccess, async (req, res) => {
   try {
-    const { status, severity, owner } = req.query;
+    const { status, severity, owner_id, owner } = req.query;
+    const ownerFilter = owner_id || owner;
 
     let query = `
       SELECT ai.*, u.display_name as owner_name, t.technique_id as attack_id, t.technique_name
@@ -112,12 +113,12 @@ router.get('/:id', verifyEngagementAccess, async (req, res) => {
     }
 
     // Filter by owner
-    if (owner) {
-      if (!isValidUUID(owner)) {
+    if (ownerFilter) {
+      if (!isValidUUID(ownerFilter)) {
         return res.status(400).json({ error: 'Invalid owner ID format' });
       }
       query += ` AND ai.owner_id = $${paramCount++}`;
-      values.push(owner);
+      values.push(ownerFilter);
     }
 
     query += ' ORDER BY ai.severity DESC, ai.due_date ASC NULLS LAST, ai.created_at DESC';
