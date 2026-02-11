@@ -1,8 +1,5 @@
 /**
  * PurpleKit Backend Server
- * 
- * This is the main entry point for the API server.
- * It sets up Express, middleware, routes, and starts listening.
  */
 
 // Load environment variables from .env file
@@ -161,7 +158,6 @@ app.listen(PORT, '0.0.0.0', () => {
   `);
 });
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received. Shutting down gracefully...');
   process.exit(0);
