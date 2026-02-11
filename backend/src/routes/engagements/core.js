@@ -129,7 +129,20 @@ router.put('/:id', async (req, res) => {
     const values = [];
     let paramCount = 1;
 
-    if (name !== undefined) { updates.push(`name = $${paramCount++}`); values.push(name.trim()); }
+    if (name !== undefined) {
+      if (typeof name !== 'string') {
+        return res.status(400).json({ error: 'name must be a string' });
+      }
+
+      const trimmedName = name.trim();
+
+      if (!trimmedName) {
+        return res.status(400).json({ error: 'name cannot be empty' });
+      }
+
+      updates.push(`name = $${paramCount++}`);
+      values.push(trimmedName);
+    }
     if (description !== undefined) { updates.push(`description = $${paramCount++}`); values.push(description?.trim() || null); }
     if (methodology !== undefined) { updates.push(`methodology = $${paramCount++}`); values.push(methodology); }
     if (status !== undefined) { updates.push(`status = $${paramCount++}`); values.push(status); }

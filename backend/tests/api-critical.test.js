@@ -127,6 +127,24 @@ describe('Critical API behavior', () => {
     expect(del.body.message).toBe('Engagement deleted');
   });
 
+  test('engagement update rejects invalid name payloads with deterministic 400 responses', async () => {
+    const invalidNames = [
+      { name: null, expectedError: 'name must be a string' },
+      { name: 123, expectedError: 'name must be a string' },
+      { name: '   ', expectedError: 'name cannot be empty' }
+    ];
+
+    for (const invalidName of invalidNames) {
+      const response = await request(app)
+        .put(`/api/engagements/${engagementId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: invalidName.name });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ error: invalidName.expectedError });
+    }
+  });
+
   test('technique status transition update and reorder endpoint behavior', async () => {
     const invalidTechniqueStatus = await request(app)
       .put(`/api/techniques/${techniqueId}`)
