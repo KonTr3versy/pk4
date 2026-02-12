@@ -264,7 +264,15 @@ router.patch('/:id/techniques/:techniqueId/status', requireTechniqueInEngagement
 
     values.push(techniqueId);
     const result = await db.query(`UPDATE techniques SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`, values);
-    res.json(result.rows[0]);
+    const updated = result.rows[0];
+    if (updated) {
+      await db.query(
+        `INSERT INTO technique_history (technique_id, engagement_id, user_id, old_status, new_status, notes)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [updated.technique_id, updated.engagement_id, req.user?.id || null, oldStatus || null, updated.status || null, notes || null]
+      );
+    }
+    res.json(updated);
   } catch (error) {
     console.error('Error updating technique status:', error);
     res.status(500).json({ error: 'Failed to update technique status' });
