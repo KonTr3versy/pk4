@@ -17,6 +17,7 @@ const approvalRoutes = require('./routes/approvals');
 const documentRoutes = require('./routes/documents');
 const actionItemRoutes = require('./routes/action-items');
 const analyticsRoutes = require('./routes/analytics');
+const adminAttackRoutes = require('./routes/admin-attack');
 
 const { requireAuth } = require('./middleware/auth');
 const db = require('./db/connection');
@@ -120,6 +121,24 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+app.get('/healthz', async (req, res) => {
+  try {
+    await db.query('SELECT 1');
+    res.status(200).json({ status: 'ok' });
+  } catch (error) {
+    res.status(500).json({ status: 'error', error: error.message });
+  }
+});
+
+app.get('/api/healthz', async (req, res) => {
+  try {
+    await db.query('SELECT 1');
+    res.status(200).json({ status: 'ok' });
+  } catch (error) {
+    res.status(500).json({ status: 'error', error: error.message });
+  }
+});
+
 app.use('/api/auth', authRateLimiter, authRoutes);
 app.use('/api/engagements', requireAuth, engagementRoutes);
 app.use('/api/techniques', requireAuth, techniqueRoutes);
@@ -132,6 +151,7 @@ app.use('/api/approvals', requireAuth, approvalRoutes);
 app.use('/api/documents', requireAuth, documentRoutes);
 app.use('/api/action-items', requireAuth, actionItemRoutes);
 app.use('/api/analytics', requireAuth, analyticsRoutes);
+app.use('/api/admin/attack', requireAuth, adminAttackRoutes);
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../../frontend/dist')));

@@ -252,6 +252,13 @@ router.put('/:id', async (req, res) => {
       values.push(remediated_at);
     }
     
+    const previousTechniqueResult = await client.query('SELECT status, engagement_id, technique_id FROM techniques WHERE id = $1', [id]);
+    if (previousTechniqueResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Technique not found' });
+    }
+    const previousTechnique = previousTechniqueResult.rows[0];
+
     let technique;
     
     if (updates.length > 0) {
@@ -285,6 +292,23 @@ router.put('/:id', async (req, res) => {
       technique = result.rows[0];
     }
     
+    if (status !== undefined || outcomes !== undefined || notes !== undefined) {
+      await client.query(
+        `INSERT INTO technique_history (technique_id, engagement_id, user_id, old_status, new_status, outcome, notes, outcome_details)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          previousTechnique.technique_id,
+          previousTechnique.engagement_id,
+          req.user?.id || null,
+          previousTechnique.status || null,
+          technique.status || previousTechnique.status || null,
+          outcomes?.[0]?.outcome_type || null,
+          notes || null,
+          outcomes ? JSON.stringify(outcomes) : null,
+        ]
+      );
+    }
+
     // If outcomes are provided, replace all outcomes for this technique
     if (outcomes !== undefined) {
       // Delete existing outcomes

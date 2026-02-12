@@ -315,3 +315,50 @@ This repo includes a GitHub Actions workflow that automatically deploys when you
 ## License
 
 MIT - Use it, modify it, ship it.
+
+## Docker quickstart
+
+```bash
+docker compose up --build
+```
+
+Services:
+- Postgres with `pg_isready` healthcheck.
+- Backend with `/healthz` healthcheck and migration-on-boot.
+- Frontend (Vite) bound to `0.0.0.0`.
+
+## ATT&CK sync (TAXII 2.1)
+
+Run a full sync (Enterprise by default):
+
+```bash
+cd backend
+npm run attack:sync -- --domain enterprise --full
+```
+
+Incremental sync (uses stored `added_after` cursor automatically):
+
+```bash
+cd backend
+npm run attack:sync -- --domain enterprise
+```
+
+Optional flags:
+- `--domain enterprise|mobile|ics`
+- `--full`
+- `--since <iso-date>`
+
+## Useful environment variables
+
+- `DATABASE_URL` - backend PostgreSQL connection string.
+- `DB_CONNECT_MAX_RETRIES` / `DB_CONNECT_RETRY_DELAY_MS` - migration DB wait strategy.
+- `VITE_API_BASE_URL` - frontend API base/proxy target (defaults to Docker backend service in Vite config).
+- `ATTACK_TAXII_BASE_URL` - TAXII API root (default: `https://attack-taxii.mitre.org/api/v21`).
+- `ATTACK_ENTERPRISE_COLLECTION_ID`, `ATTACK_MOBILE_COLLECTION_ID`, `ATTACK_ICS_COLLECTION_ID` - override TAXII collection IDs.
+
+## Smoke test
+
+```bash
+cd backend
+npm run smoke
+```
