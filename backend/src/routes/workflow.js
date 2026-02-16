@@ -23,8 +23,8 @@ const { recordTechniqueHistory } = require('../services/history');
 // =============================================================================
 
 const VALID_GOAL_TYPES = [
-  'collaborative_culture', 'test_attack_chains', 'train_defenders',
-  'test_new_ttps', 'red_team_replay', 'test_processes', 'custom'
+  'validate_detection', 'test_response', 'measure_coverage', 'train_team',
+  'compliance_evidence', 'tool_evaluation', 'threat_emulation', 'custom'
 ];
 
 const VALID_ROLES = [
@@ -208,14 +208,6 @@ router.post('/:id/goals', verifyEngagementAccess, async (req, res) => {
        RETURNING *`,
       [req.params.id, goal_type, sanitizeText(custom_text?.trim()), is_primary || false]
     );
-
-    await recordTechniqueHistory({
-      engagementId: req.params.id,
-      techniqueId: techCheck.rows[0].technique_id,
-      userId: req.user?.id,
-      eventType: 'technique_expectation_created',
-      payload: result.rows[0],
-    });
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -895,14 +887,6 @@ router.post('/:id/techniques/:techId/expectations', verifyEngagementAccess, asyn
         sanitizeText(notes)
       ]
     );
-
-    await recordTechniqueHistory({
-      engagementId: req.params.id,
-      techniqueId: techCheck.rows[0].technique_id,
-      userId: req.user?.id,
-      eventType: 'technique_expectation_created',
-      payload: result.rows[0],
-    });
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
