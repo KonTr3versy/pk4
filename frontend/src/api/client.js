@@ -649,6 +649,65 @@ export async function deleteEngagementRole(engagementId, roleId) {
   });
 }
 
+
+export async function getRoleResponsibilityDefaults() {
+  return apiRequest('/workflow/role-defaults');
+}
+
+export async function updateEngagementRole(engagementId, roleId, data) {
+  return apiRequest(`/workflow/${engagementId}/roles/${roleId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+// Planning Phases
+export async function getPlanningPhases(engagementId) {
+  return apiRequest(`/workflow/${engagementId}/planning-phases`);
+}
+
+export async function savePlanningPhase(engagementId, data) {
+  return apiRequest(`/workflow/${engagementId}/planning-phases`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updatePlanningPhase(engagementId, phaseId, data) {
+  return apiRequest(`/workflow/${engagementId}/planning-phases/${phaseId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getPlanningPhaseAttendees(engagementId, phaseId) {
+  return apiRequest(`/workflow/${engagementId}/planning-phases/${phaseId}/attendees`);
+}
+
+export async function savePlanningPhaseAttendee(engagementId, phaseId, data) {
+  return apiRequest(`/workflow/${engagementId}/planning-phases/${phaseId}/attendees`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getPlanningPhaseOutputs(engagementId, phaseId) {
+  return apiRequest(`/workflow/${engagementId}/planning-phases/${phaseId}/outputs`);
+}
+
+export async function savePlanningPhaseOutput(engagementId, phaseId, data) {
+  return apiRequest(`/workflow/${engagementId}/planning-phases/${phaseId}/outputs`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updatePlanningPhaseOutput(engagementId, phaseId, outputId, data) {
+  return apiRequest(`/workflow/${engagementId}/planning-phases/${phaseId}/outputs/${outputId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
 // Expectations (Table Top Matrix)
 export async function getTechniqueExpectations(engagementId, techId) {
   return apiRequest(`/workflow/${engagementId}/techniques/${techId}/expectations`);
@@ -866,4 +925,89 @@ export async function getCoverageSummary(engagementId) {
 
 export async function getDetectionRules(engagementId) {
   return apiRequest(`/analytics/${engagementId}/detection-rules`);
+}
+
+export async function calculateEngagementMetrics(engagementId) {
+  return apiRequest(`/analytics/${engagementId}/metrics/calculate`, {
+    method: 'POST',
+  });
+}
+
+export async function getEngagementMetrics(engagementId) {
+  return apiRequest(`/analytics/${engagementId}/metrics`);
+}
+
+export async function getOrganizationAttackCoverage(orgId) {
+  return apiRequest(`/analytics/organizations/${orgId}/attack-coverage`);
+}
+
+export async function exportOrganizationNavigatorCoverage(orgId) {
+  return apiRequest(`/analytics/organizations/${orgId}/attack-coverage/export-navigator`, {
+    method: 'POST',
+  });
+}
+
+export async function getOrganizationKpis(orgId) {
+  return apiRequest(`/analytics/organizations/${orgId}/kpis`);
+}
+
+export async function calculateOrganizationKpis(orgId, data) {
+  return apiRequest(`/analytics/organizations/${orgId}/kpis/calculate`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getActionItemRiskQuantification(actionItemId) {
+  return apiRequest(`/analytics/action-items/${actionItemId}/risk-quantification`);
+}
+
+export async function saveActionItemRiskQuantification(actionItemId, data) {
+  return apiRequest(`/analytics/action-items/${actionItemId}/risk-quantification`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getEngagementRiskSummary(engagementId) {
+  return apiRequest(`/analytics/${engagementId}/risk-summary`);
+}
+
+export async function generateAiExecutiveSummary(engagementId) {
+  return apiRequest(`/analytics/${engagementId}/ai/generate-summary`, {
+    method: 'POST',
+  });
+}
+
+// =============================================================================
+// THREAT PIPELINE
+// =============================================================================
+
+export async function getThreatPipeline(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.status) params.append('status', filters.status);
+  if (filters.source) params.append('source', filters.source);
+  if (filters.search) params.append('search', filters.search);
+  const qs = params.toString();
+  return apiRequest(`/threat-pipeline${qs ? `?${qs}` : ''}`);
+}
+
+export async function createThreatPipelineItem(data) {
+  return apiRequest('/threat-pipeline', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateThreatPipelineItem(id, data) {
+  return apiRequest(`/threat-pipeline/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteThreatPipelineItem(id) {
+  return apiRequest(`/threat-pipeline/${id}`, {
+    method: 'DELETE',
+  });
 }
