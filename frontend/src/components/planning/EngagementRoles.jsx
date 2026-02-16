@@ -1,18 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Users, Plus, Trash2, Loader2, User, Mail } from 'lucide-react';
 import * as api from '../../api/client';
 
 const ROLE_TYPES = [
-  { id: 'coordinator', label: 'Coordinator', description: 'Overall exercise coordinator', color: 'purple' },
-  { id: 'sponsor', label: 'Sponsor', description: 'Executive sponsor', color: 'yellow' },
-  { id: 'cti', label: 'CTI Lead', description: 'Cyber threat intelligence lead', color: 'blue' },
-  { id: 'red_lead', label: 'Red Team Lead', description: 'Leads red team operations', color: 'red' },
-  { id: 'red_team', label: 'Red Team Member', description: 'Red team operator', color: 'red' },
-  { id: 'blue_lead', label: 'Blue Team Lead', description: 'Leads blue team defense', color: 'blue' },
-  { id: 'soc', label: 'SOC Analyst', description: 'Security Operations Center', color: 'cyan' },
-  { id: 'hunt', label: 'Threat Hunter', description: 'Proactive threat hunting', color: 'green' },
-  { id: 'dfir', label: 'DFIR Analyst', description: 'Digital forensics and incident response', color: 'orange' },
-  { id: 'spectator', label: 'Spectator', description: 'Observer with limited access', color: 'gray' }
+  { id: 'coordinator', label: 'Coordinator', description: 'Own schedule, stakeholder communication, and delivery.', color: 'purple' },
+  { id: 'red_team_lead', label: 'Red Team Lead', description: 'Coordinates emulation scope and red-team execution.', color: 'red' },
+  { id: 'red_team_operator', label: 'Red Team Operator', description: 'Executes test cases and tracks technical activity.', color: 'red' },
+  { id: 'blue_team_lead', label: 'Blue Team Lead', description: 'Coordinates blue-team detection and response outcomes.', color: 'blue' },
+  { id: 'blue_team_analyst', label: 'Blue Team Analyst', description: 'Monitors alerts, hunts, triages, and documents.', color: 'cyan' },
+  { id: 'threat_intel', label: 'Threat Intel', description: 'Provides threat context, relevance, and actor insight.', color: 'yellow' },
+  { id: 'sysadmin', label: 'System Administrator', description: 'Supports host/tool readiness and telemetry needs.', color: 'green' },
+  { id: 'stakeholder', label: 'Stakeholder', description: 'Approves plan and reviews outcomes.', color: 'orange' }
 ];
 
 const ROLE_COLORS = {
@@ -29,32 +27,53 @@ const ROLE_COLORS = {
 export default function EngagementRoles({ engagementId, onUpdate }) {
   const [roles, setRoles] = useState([]);
   const [users, setUsers] = useState([]);
+  const [roleDefaults, setRoleDefaults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [isExternal, setIsExternal] = useState(false);
   const [newRole, setNewRole] = useState({
-    role_type: '',
+    role: '',
     user_id: '',
     external_name: '',
     external_email: '',
-    responsibilities: ''
+    responsibilitiesText: ''
   });
+
+  const defaultsByRole = useMemo(() => {
+    const map = new Map();
+    roleDefaults.forEach((entry) => {
+      map.set(entry.role, Array.isArray(entry.responsibilities) ? entry.responsibilities : []);
+    });
+    return map;
+  }, [roleDefaults]);
 
   useEffect(() => {
     loadData();
   }, [engagementId]);
 
+  useEffect(() => {
+    if (!newRole.role) return;
+    const defaults = defaultsByRole.get(newRole.role) || [];
+    setNewRole((prev) => ({
+      ...prev,
+      responsibilitiesText: prev.responsibilitiesText || defaults.join(', ')
+    }));
+  }, [newRole.role, defaultsByRole]);
+
   async function loadData() {
     try {
       setLoading(true);
-      const [rolesData, usersData] = await Promise.all([
+      setError(null);
+      const [rolesData, usersData, defaultsData] = await Promise.all([
         api.getEngagementRoles(engagementId),
-        api.getUsers()
+        api.getUsers(),
+        api.getRoleResponsibilityDefaults()
       ]);
       setRoles(rolesData || []);
       setUsers(usersData || []);
+      setRoleDefaults(defaultsData || []);
     } catch (err) {
       setError('Failed to load roles');
       console.error(err);
@@ -63,19 +82,28 @@ export default function EngagementRoles({ engagementId, onUpdate }) {
     }
   }
 
+  function parseResponsibilities(text) {
+    if (!text || !text.trim()) return [];
+    return text
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
   async function handleAddRole() {
-    if (!newRole.role_type) return;
+    if (!newRole.role) return;
     if (!isExternal && !newRole.user_id) return;
     if (isExternal && !newRole.external_name) return;
 
     try {
       setSaving(true);
+      setError(null);
       const saved = await api.saveEngagementRole(engagementId, {
-        role_type: newRole.role_type,
+        role: newRole.role,
         user_id: isExternal ? null : newRole.user_id,
         external_name: isExternal ? newRole.external_name : null,
         external_email: isExternal ? newRole.external_email : null,
-        responsibilities: newRole.responsibilities
+        responsibilities: parseResponsibilities(newRole.responsibilitiesText)
       });
       setRoles([...roles, saved]);
       resetForm();
@@ -89,6 +117,7 @@ export default function EngagementRoles({ engagementId, onUpdate }) {
 
   async function handleDeleteRole(roleId) {
     try {
+      setError(null);
       await api.deleteEngagementRole(engagementId, roleId);
       setRoles(roles.filter(r => r.id !== roleId));
       onUpdate?.();
@@ -101,11 +130,11 @@ export default function EngagementRoles({ engagementId, onUpdate }) {
     setShowAddForm(false);
     setIsExternal(false);
     setNewRole({
-      role_type: '',
+      role: '',
       user_id: '',
       external_name: '',
       external_email: '',
-      responsibilities: ''
+      responsibilitiesText: ''
     });
   }
 
@@ -126,9 +155,8 @@ export default function EngagementRoles({ engagementId, onUpdate }) {
     );
   }
 
-  // Group roles by type
   const groupedRoles = ROLE_TYPES.reduce((acc, type) => {
-    acc[type.id] = roles.filter(r => r.role_type === type.id);
+    acc[type.id] = roles.filter(r => r.role === type.id);
     return acc;
   }, {});
 
@@ -141,7 +169,7 @@ export default function EngagementRoles({ engagementId, onUpdate }) {
             Roles & Responsibilities
           </h3>
           <p className="text-sm text-gray-400 mt-1">
-            Assign team members to engagement roles
+            Assign team members and defined duties for each planning role
           </p>
         </div>
         <button
@@ -173,11 +201,11 @@ export default function EngagementRoles({ engagementId, onUpdate }) {
       ) : (
         <div className="space-y-3">
           {ROLE_TYPES.map(roleType => {
-            const typeRoles = groupedRoles[roleType.id];
-            if (!typeRoles || typeRoles.length === 0) return null;
+            const typeRoles = groupedRoles[roleType.id] || [];
+            if (typeRoles.length === 0) return null;
 
             return (
-              <div key={roleType.id} className="bg-gray-800 rounded-lg p-3">
+              <div key={roleType.id} className="p-3 bg-gray-800 rounded-lg">
                 <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border text-xs mb-2 ${ROLE_COLORS[roleType.color]}`}>
                   {roleType.label}
                 </div>
@@ -200,8 +228,10 @@ export default function EngagementRoles({ engagementId, onUpdate }) {
                           {role.external_email && (
                             <div className="text-xs text-gray-500">{role.external_email}</div>
                           )}
-                          {role.responsibilities && (
-                            <div className="text-xs text-gray-400 mt-1">{role.responsibilities}</div>
+                          {Array.isArray(role.responsibilities) && role.responsibilities.length > 0 && (
+                            <div className="text-xs text-gray-400 mt-1">
+                              {role.responsibilities.join(', ')}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -225,8 +255,8 @@ export default function EngagementRoles({ engagementId, onUpdate }) {
           <div>
             <label className="block text-sm font-medium mb-2">Role Type</label>
             <select
-              value={newRole.role_type}
-              onChange={(e) => setNewRole({ ...newRole, role_type: e.target.value })}
+              value={newRole.role}
+              onChange={(e) => setNewRole({ ...newRole, role: e.target.value, responsibilitiesText: '' })}
               className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500"
             >
               <option value="">Select a role...</option>
@@ -302,13 +332,13 @@ export default function EngagementRoles({ engagementId, onUpdate }) {
 
           <div>
             <label className="block text-sm font-medium mb-2">
-              Responsibilities (optional)
+              Responsibilities (comma separated)
             </label>
             <input
               type="text"
-              value={newRole.responsibilities}
-              onChange={(e) => setNewRole({ ...newRole, responsibilities: e.target.value })}
-              placeholder="Specific responsibilities for this role..."
+              value={newRole.responsibilitiesText}
+              onChange={(e) => setNewRole({ ...newRole, responsibilitiesText: e.target.value })}
+              placeholder="e.g., schedule_exercises, stakeholder_communication"
               className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500"
             />
           </div>
@@ -322,7 +352,7 @@ export default function EngagementRoles({ engagementId, onUpdate }) {
             </button>
             <button
               onClick={handleAddRole}
-              disabled={!newRole.role_type || saving || (!isExternal && !newRole.user_id) || (isExternal && !newRole.external_name)}
+              disabled={!newRole.role || saving || (!isExternal && !newRole.user_id) || (isExternal && !newRole.external_name)}
               className="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-lg text-sm flex items-center justify-center gap-2"
             >
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}

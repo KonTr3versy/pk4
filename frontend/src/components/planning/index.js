@@ -20,3 +20,4 @@ export { default as DocumentHistory } from './DocumentHistory';
 export { default as ActionItemsPanel } from './ActionItemsPanel';
 export { default as BlueTeamResults } from './BlueTeamResults';
 export { default as PlanningWorkflow } from './PlanningWorkflow';
+export { default as PlanningPhases } from './PlanningPhases';
