@@ -62,15 +62,23 @@ router.post('/setup', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
     
+    const orgResult = await db.query(
+      `INSERT INTO orgs (name) VALUES ('Default Org')
+       ON CONFLICT DO NOTHING
+       RETURNING id`
+    );
+    const fallbackOrg = await db.query('SELECT id FROM orgs ORDER BY created_at ASC LIMIT 1');
+    const defaultOrgId = orgResult.rows[0]?.id || fallbackOrg.rows[0]?.id;
+
     // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
     
     // Create admin user
     const result = await db.query(
-      `INSERT INTO users (username, password_hash, display_name, role)
-       VALUES ($1, $2, $3, 'admin')
-       RETURNING id, username, display_name, role, created_at`,
-      [username.toLowerCase(), passwordHash, displayName || username]
+      `INSERT INTO users (username, password_hash, display_name, role, org_id)
+       VALUES ($1, $2, $3, 'admin', $4)
+       RETURNING id, username, display_name, role, org_id, created_at`,
+      [username.toLowerCase(), passwordHash, displayName || username, defaultOrgId]
     );
     
     const user = result.rows[0];
@@ -84,6 +92,7 @@ router.post('/setup', async (req, res) => {
         username: user.username,
         displayName: user.display_name,
         role: user.role,
+        orgId: user.org_id,
       },
       token,
       refreshToken,
@@ -154,6 +163,7 @@ router.post('/login', async (req, res) => {
         username: user.username,
         displayName: user.display_name,
         role: user.role,
+        orgId: user.org_id,
       },
       token,
       refreshToken,
@@ -171,7 +181,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT id, username, display_name, role, created_at FROM users WHERE id = $1',
+      'SELECT id, username, display_name, role, org_id, created_at FROM users WHERE id = $1',
       [req.user.id]
     );
     
@@ -185,6 +195,7 @@ router.get('/me', requireAuth, async (req, res) => {
       username: user.username,
       displayName: user.display_name,
       role: user.role,
+      orgId: user.org_id,
       createdAt: user.created_at,
     });
   } catch (error) {
@@ -213,7 +224,7 @@ router.post('/refresh', async (req, res) => {
     }
 
     const result = await db.query(
-      'SELECT id, username, display_name, role FROM users WHERE id = $1',
+      'SELECT id, username, display_name, role, org_id FROM users WHERE id = $1',
       [decoded.id]
     );
 
@@ -259,6 +270,14 @@ router.post('/users', requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
     
+    const orgResult = await db.query(
+      `INSERT INTO orgs (name) VALUES ('Default Org')
+       ON CONFLICT DO NOTHING
+       RETURNING id`
+    );
+    const fallbackOrg = await db.query('SELECT id FROM orgs ORDER BY created_at ASC LIMIT 1');
+    const defaultOrgId = orgResult.rows[0]?.id || fallbackOrg.rows[0]?.id;
+
     // Check if username exists
     const existing = await db.query(
       'SELECT id FROM users WHERE username = $1',
@@ -274,10 +293,10 @@ router.post('/users', requireAuth, requireAdmin, async (req, res) => {
     
     // Create user
     const result = await db.query(
-      `INSERT INTO users (username, password_hash, display_name, role)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, username, display_name, role, created_at`,
-      [username.toLowerCase(), passwordHash, displayName || username, role || 'user']
+      `INSERT INTO users (username, password_hash, display_name, role, org_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, username, display_name, role, org_id, created_at`,
+      [username.toLowerCase(), passwordHash, displayName || username, role || 'user', req.user.org_id]
     );
     
     const user = result.rows[0];
@@ -286,6 +305,7 @@ router.post('/users', requireAuth, requireAdmin, async (req, res) => {
       username: user.username,
       displayName: user.display_name,
       role: user.role,
+      orgId: user.org_id,
       createdAt: user.created_at,
     });
   } catch (error) {
@@ -301,7 +321,8 @@ router.post('/users', requireAuth, requireAdmin, async (req, res) => {
 router.get('/users', requireAuth, requireAdmin, async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT id, username, display_name, role, created_at FROM users ORDER BY created_at DESC'
+      'SELECT id, username, display_name, role, org_id, created_at FROM users WHERE org_id = $1 ORDER BY created_at DESC',
+      [req.user.org_id]
     );
     
     res.json(result.rows.map(user => ({
@@ -309,6 +330,7 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
       username: user.username,
       displayName: user.display_name,
       role: user.role,
+      orgId: user.org_id,
       createdAt: user.created_at,
     })));
   } catch (error) {
@@ -347,3 +369,10 @@ router.delete('/users/:id', requireAuth, requireAdmin, async (req, res) => {
 });
 
 module.exports = router;
+    const orgResult = await db.query(
+      `INSERT INTO orgs (name) VALUES ('Default Org')
+       ON CONFLICT DO NOTHING
+       RETURNING id`
+    );
+    const fallbackOrg = await db.query('SELECT id FROM orgs ORDER BY created_at ASC LIMIT 1');
+    const defaultOrgId = orgResult.rows[0]?.id || fallbackOrg.rows[0]?.id;

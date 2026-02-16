@@ -15,6 +15,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
+const { recordTechniqueHistory } = require('../services/history');
 
 // =============================================================================
 // GET /api/techniques/search
@@ -252,7 +253,7 @@ router.put('/:id', async (req, res) => {
       values.push(remediated_at);
     }
     
-    const previousTechniqueResult = await client.query('SELECT status, engagement_id, technique_id FROM techniques WHERE id = $1', [id]);
+    const previousTechniqueResult = await client.query('SELECT status, engagement_id, technique_id FROM techniques WHERE id = $1 AND org_id = $2', [id, req.user.org_id]);
     if (previousTechniqueResult.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Technique not found' });
@@ -263,10 +264,11 @@ router.put('/:id', async (req, res) => {
     
     if (updates.length > 0) {
       values.push(id);
+      values.push(req.user.org_id);
       const result = await client.query(
         `UPDATE techniques 
          SET ${updates.join(', ')}
-         WHERE id = $${paramCount}
+         WHERE id = $${paramCount} AND org_id = $${paramCount + 1}
          RETURNING *`,
         values
       );
@@ -280,8 +282,8 @@ router.put('/:id', async (req, res) => {
     } else {
       // Just fetch the technique if no updates
       const result = await client.query(
-        'SELECT * FROM techniques WHERE id = $1',
-        [id]
+        'SELECT * FROM techniques WHERE id = $1 AND org_id = $2',
+        [id, req.user.org_id]
       );
       
       if (result.rows.length === 0) {
@@ -293,20 +295,20 @@ router.put('/:id', async (req, res) => {
     }
     
     if (status !== undefined || outcomes !== undefined || notes !== undefined) {
-      await client.query(
-        `INSERT INTO technique_history (technique_id, engagement_id, user_id, old_status, new_status, outcome, notes, outcome_details)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          previousTechnique.technique_id,
-          previousTechnique.engagement_id,
-          req.user?.id || null,
-          previousTechnique.status || null,
-          technique.status || previousTechnique.status || null,
-          outcomes?.[0]?.outcome_type || null,
-          notes || null,
-          outcomes ? JSON.stringify(outcomes) : null,
-        ]
-      );
+      await recordTechniqueHistory({
+        client,
+        engagementId: previousTechnique.engagement_id,
+        techniqueId: previousTechnique.technique_id,
+        userId: req.user?.id,
+        eventType: 'technique_update',
+        payload: {
+          old_status: previousTechnique.status || null,
+          new_status: technique.status || previousTechnique.status || null,
+          outcome: outcomes?.[0]?.outcome_type || null,
+          notes: notes || null,
+          outcomes: outcomes || null,
+        },
+      });
     }
 
     // If outcomes are provided, replace all outcomes for this technique
@@ -358,9 +360,9 @@ router.put('/:id', async (req, res) => {
         ) as outcomes
        FROM techniques t
        LEFT JOIN detection_outcomes do ON t.id = do.technique_id
-       WHERE t.id = $1
+       WHERE t.id = $1 AND t.org_id = $2
        GROUP BY t.id`,
-      [id]
+      [id, req.user.org_id]
     );
     
     res.json(finalResult.rows[0]);
@@ -383,8 +385,8 @@ router.delete('/:id', async (req, res) => {
     const { id } = req.params;
     
     const result = await db.query(
-      'DELETE FROM techniques WHERE id = $1 RETURNING id',
-      [id]
+      'DELETE FROM techniques WHERE id = $1 AND org_id = $2 RETURNING id',
+      [id, req.user.org_id]
     );
     
     if (result.rows.length === 0) {
@@ -417,8 +419,8 @@ router.post('/:id/outcomes', async (req, res) => {
     
     // Verify technique exists
     const techniqueCheck = await db.query(
-      'SELECT id FROM techniques WHERE id = $1',
-      [id]
+      'SELECT id FROM techniques WHERE id = $1 AND org_id = $2',
+      [id, req.user.org_id]
     );
     
     if (techniqueCheck.rows.length === 0) {

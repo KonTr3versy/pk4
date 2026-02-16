@@ -11,9 +11,12 @@
 const express = require('express');
 const router = express.Router();
 const path = require('path');
+const os = require('os');
 const fs = require('fs').promises;
 const { v4: uuidv4 } = require('uuid');
+const { spawn } = require('child_process');
 const db = require('../db/connection');
+const { requireFeature } = require('../middleware/features');
 const {
   generatePlanDocument,
   generateExecutiveReport,
@@ -22,6 +25,7 @@ const {
   gatherExecutiveReportData,
   gatherTechnicalReportData
 } = require('../services/documentGenerator');
+const { buildReportBundle } = require('../services/reportBundle');
 
 // =============================================================================
 // CONFIGURATION
@@ -95,8 +99,8 @@ async function verifyEngagementAccess(req, res, next) {
 
   try {
     const result = await db.query(
-      'SELECT id, status, name FROM engagements WHERE id = $1',
-      [id]
+      'SELECT id, status, name FROM engagements WHERE id = $1 AND org_id = $2',
+      [id, req.user.org_id]
     );
 
     if (result.rows.length === 0) {
@@ -123,15 +127,64 @@ router.get('/:id', verifyEngagementAccess, async (req, res) => {
       `SELECT ed.*, u.display_name as generated_by_name
        FROM engagement_documents ed
        LEFT JOIN users u ON ed.generated_by = u.id
-       WHERE ed.engagement_id = $1
+       WHERE ed.engagement_id = $1 AND ed.org_id = $2
        ORDER BY ed.document_type, ed.version DESC`,
-      [req.params.id]
+      [req.params.id, req.user.org_id]
     );
 
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching documents:', error);
     res.status(500).json({ error: 'Failed to fetch documents' });
+  }
+});
+
+
+// GET /api/documents/:engagementId/bundle
+router.get('/:engagementId/bundle', requireFeature('report_bundle'), async (req, res) => {
+  try {
+    const { engagementId } = req.params;
+    const engagementResult = await db.query(
+      'SELECT id, name, org_id FROM engagements WHERE id = $1 AND org_id = $2',
+      [engagementId, req.user.org_id]
+    );
+
+    if (!engagementResult.rows.length) {
+      return res.status(404).json({ error: 'Engagement not found' });
+    }
+
+    const engagement = engagementResult.rows[0];
+    const { files, filename } = await buildReportBundle({
+      engagement,
+      includeEngagementJson: req.query.include_engagement_json === 'true',
+    });
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'purplekit-bundle-'));
+    for (const file of files) {
+      await fs.writeFile(path.join(tempDir, file.name), file.data, file.encoding ? { encoding: file.encoding } : undefined);
+    }
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    const zip = spawn('zip', ['-q', '-r', '-', '.'], { cwd: tempDir });
+
+    zip.stdout.pipe(res);
+    zip.stderr.on('data', (chunk) => {
+      console.error('zip stderr:', chunk.toString());
+    });
+
+    zip.on('close', async (code) => {
+      await fs.rm(tempDir, { recursive: true, force: true });
+      if (code !== 0 && !res.headersSent) {
+        res.status(500).json({ error: 'Failed to build report bundle zip' });
+      }
+    });
+  } catch (error) {
+    console.error('Error exporting report bundle:', error);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Failed to export report bundle' });
+    }
   }
 });
 
@@ -182,10 +235,10 @@ router.post('/:id/plan/generate', verifyEngagementAccess, async (req, res) => {
     // Record in database
     const result = await db.query(
       `INSERT INTO engagement_documents
-       (engagement_id, document_type, version, file_path, file_name, file_size, generated_by)
-       VALUES ($1, 'plan', $2, $3, $4, $5, $6)
+       (engagement_id, org_id, document_type, version, file_path, file_name, file_size, generated_by)
+       VALUES ($1, $2, 'plan', $3, $4, $5, $6, $7)
        RETURNING *`,
-      [engagementId, version, filePath, fileName, buffer.length, userId]
+      [engagementId, req.user.org_id, version, filePath, fileName, buffer.length, userId]
     );
 
     // Update engagement status if first plan generation
@@ -253,10 +306,10 @@ router.post('/:id/executive-report/generate', verifyEngagementAccess, async (req
 
     const result = await db.query(
       `INSERT INTO engagement_documents
-       (engagement_id, document_type, version, file_path, file_name, file_size, generated_by)
-       VALUES ($1, 'executive_report', $2, $3, $4, $5, $6)
+       (engagement_id, org_id, document_type, version, file_path, file_name, file_size, generated_by)
+       VALUES ($1, $2, 'executive_report', $3, $4, $5, $6, $7)
        RETURNING *`,
-      [engagementId, version, filePath, fileName, buffer.length, userId]
+      [engagementId, req.user.org_id, version, filePath, fileName, buffer.length, userId]
     );
 
     console.log(`[AUDIT] Executive report generated: engagement=${engagementId}, version=${version}, user=${userId}`);
@@ -312,10 +365,10 @@ router.post('/:id/technical-report/generate', verifyEngagementAccess, async (req
 
     const result = await db.query(
       `INSERT INTO engagement_documents
-       (engagement_id, document_type, version, file_path, file_name, file_size, generated_by)
-       VALUES ($1, 'technical_report', $2, $3, $4, $5, $6)
+       (engagement_id, org_id, document_type, version, file_path, file_name, file_size, generated_by)
+       VALUES ($1, $2, 'technical_report', $3, $4, $5, $6, $7)
        RETURNING *`,
-      [engagementId, version, filePath, fileName, buffer.length, userId]
+      [engagementId, req.user.org_id, version, filePath, fileName, buffer.length, userId]
     );
 
     console.log(`[AUDIT] Technical report generated: engagement=${engagementId}, version=${version}, user=${userId}`);
@@ -343,8 +396,8 @@ router.get('/:id/:documentId/download', verifyEngagementAccess, async (req, res)
     // Fetch document record
     const result = await db.query(
       `SELECT * FROM engagement_documents
-       WHERE id = $1 AND engagement_id = $2`,
-      [documentId, req.params.id]
+       WHERE id = $1 AND engagement_id = $2 AND org_id = $3`,
+      [documentId, req.params.id, req.user.org_id]
     );
 
     if (result.rows.length === 0) {
@@ -412,8 +465,8 @@ router.delete('/:id/:documentId', verifyEngagementAccess, async (req, res) => {
 
     // Fetch document
     const result = await db.query(
-      `SELECT * FROM engagement_documents WHERE id = $1 AND engagement_id = $2`,
-      [documentId, req.params.id]
+      `SELECT * FROM engagement_documents WHERE id = $1 AND engagement_id = $2 AND org_id = $3`,
+      [documentId, req.params.id, req.user.org_id]
     );
 
     if (result.rows.length === 0) {

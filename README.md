@@ -356,6 +356,60 @@ Optional flags:
 - `ATTACK_TAXII_BASE_URL` - TAXII API root (default: `https://attack-taxii.mitre.org/api/v21`).
 - `ATTACK_ENTERPRISE_COLLECTION_ID`, `ATTACK_MOBILE_COLLECTION_ID`, `ATTACK_ICS_COLLECTION_ID` - override TAXII collection IDs.
 
+
+### API base URL behavior
+
+If `VITE_API_BASE_URL` is set, PurpleKit automatically appends `/api` unless it is already present.
+
+Examples:
+- `VITE_API_BASE_URL=http://localhost:3000` → requests go to `http://localhost:3000/api/*`
+- `VITE_API_BASE_URL=http://backend:3000/api` → requests stay on `http://backend:3000/api/*`
+- unset `VITE_API_BASE_URL` → requests use relative `/api/*`
+
+### Report bundle export
+
+Licensed organizations can download a report bundle ZIP from:
+
+- `GET /api/documents/:engagementId/bundle`
+
+Bundle contents:
+- `plan.docx`
+- `executive_report.docx`
+- `technical_report.docx`
+- `attack_navigator_layer.json`
+- `action_items.csv`
+- optional `engagement.json` (when `?include_engagement_json=true`)
+- `README.txt`
+
+### License generation and import (MVP HMAC format)
+
+License key format is:
+
+`<base64url(json_payload)>.<hex_hmac_sha256_signature>`
+
+Where signature = `HMAC_SHA256(payloadB64, LICENSE_SECRET)`.
+
+Payload example:
+
+```json
+{
+  "plan": "pro",
+  "features": {
+    "report_bundle": true
+  },
+  "validUntil": "2026-12-31T23:59:59Z",
+  "seats": 25
+}
+```
+
+Apply a license key (org admin):
+
+- `POST /api/admin/license`
+- body: `{ "licenseKey": "..." }`
+
+Without a valid license enabling `report_bundle`, the bundle endpoint returns HTTP 402.
+
+
 ## Smoke test
 
 ```bash

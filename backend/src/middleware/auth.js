@@ -63,7 +63,8 @@ function generateToken(user) {
     { 
       id: user.id, 
       username: user.username,
-      role: user.role 
+      role: user.role,
+      org_id: user.org_id,
     },
     JWT_SECRET,
     { expiresIn: JWT_ACCESS_TOKEN_TTL }

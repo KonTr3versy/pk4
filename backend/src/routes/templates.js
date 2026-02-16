@@ -13,6 +13,32 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 
+
+async function upsertTemplateTechniquePack(templateId, techniquePack = []) {
+  await db.query('DELETE FROM template_technique_packs WHERE template_id = $1', [templateId]);
+
+  for (const item of techniquePack) {
+    if (!item?.technique_id) continue;
+    await db.query(
+      `INSERT INTO template_technique_packs (template_id, tactic, technique_id, expected_telemetry, detection_query)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [templateId, item.tactic || null, item.technique_id, item.expected_telemetry || null, item.detection_query || null]
+    );
+  }
+}
+
+async function getTemplateTechniquePack(templateId) {
+  const pack = await db.query(
+    `SELECT tactic, technique_id, expected_telemetry, detection_query
+     FROM template_technique_packs
+     WHERE template_id = $1
+     ORDER BY tactic NULLS LAST, technique_id`,
+    [templateId]
+  );
+  return pack.rows;
+}
+
+
 // =============================================================================
 // GET /api/templates
 // =============================================================================
@@ -29,11 +55,11 @@ router.get('/', async (req, res) => {
         array_length(et.technique_ids, 1) as technique_count
       FROM engagement_templates et
       LEFT JOIN users u ON et.created_by = u.id
-      WHERE (et.is_public = true OR et.created_by = $1)
+      WHERE (et.is_public = true OR et.org_id = $2)
     `;
 
-    const values = [userId];
-    let paramCount = 2;
+    const values = [userId, req.user.org_id];
+    let paramCount = 3;
 
     if (methodology) {
       query += ` AND et.methodology = $${paramCount++}`;
@@ -71,15 +97,17 @@ router.get('/:id', async (req, res) => {
         u.display_name as created_by_name
        FROM engagement_templates et
        LEFT JOIN users u ON et.created_by = u.id
-       WHERE et.id = $1 AND (et.is_public = true OR et.created_by = $2)`,
-      [id, userId]
+       WHERE et.id = $1 AND (et.is_public = true OR et.org_id = $3)`,
+      [id, userId, req.user.org_id]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Template not found' });
     }
 
-    res.json(result.rows[0]);
+    const template = result.rows[0];
+    template.technique_pack = await getTemplateTechniquePack(template.id);
+    res.json(template);
   } catch (error) {
     console.error('Error fetching template:', error);
     res.status(500).json({ error: 'Failed to fetch template' });
@@ -92,7 +120,7 @@ router.get('/:id', async (req, res) => {
 // Creates a new template
 router.post('/', async (req, res) => {
   try {
-    const { name, description, methodology, technique_ids, estimated_duration_hours, is_public, default_objectives, default_controls } = req.body;
+    const { name, description, methodology, technique_ids, estimated_duration_hours, is_public, default_objectives, default_controls, technique_pack } = req.body;
     const userId = req.user?.id;
 
     if (!name || !name.trim()) {
@@ -108,10 +136,11 @@ router.post('/', async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO engagement_templates
-       (name, description, methodology, technique_ids, default_objectives, default_controls, estimated_duration_hours, is_public, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       (org_id, name, description, methodology, technique_ids, default_objectives, default_controls, estimated_duration_hours, is_public, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
+        req.user.org_id,
         name.trim(),
         description?.trim() || null,
         methodology,
@@ -124,7 +153,11 @@ router.post('/', async (req, res) => {
       ]
     );
 
-    res.status(201).json(result.rows[0]);
+    await upsertTemplateTechniquePack(result.rows[0].id, Array.isArray(technique_pack) ? technique_pack : []);
+    const created = result.rows[0];
+    created.technique_pack = await getTemplateTechniquePack(created.id);
+
+    res.status(201).json(created);
   } catch (error) {
     console.error('Error creating template:', error);
     res.status(500).json({ error: 'Failed to create template' });
@@ -138,13 +171,13 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, methodology, technique_ids, estimated_duration_hours, is_public, default_objectives, default_controls } = req.body;
+    const { name, description, methodology, technique_ids, estimated_duration_hours, is_public, default_objectives, default_controls, technique_pack } = req.body;
     const userId = req.user?.id;
     const isAdmin = req.user?.role === 'admin';
 
     // Check ownership
     const ownerCheck = await db.query(
-      'SELECT created_by FROM engagement_templates WHERE id = $1',
+      'SELECT created_by, org_id FROM engagement_templates WHERE id = $1',
       [id]
     );
 
@@ -152,7 +185,7 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Template not found' });
     }
 
-    if (ownerCheck.rows[0].created_by !== userId && !isAdmin) {
+    if (ownerCheck.rows[0].org_id !== req.user.org_id || (ownerCheck.rows[0].created_by !== userId && !isAdmin)) {
       return res.status(403).json({ error: 'You do not have permission to update this template' });
     }
 
@@ -197,21 +230,34 @@ router.put('/:id', async (req, res) => {
       values.push(is_public);
     }
 
-    if (updates.length === 0) {
+    if (updates.length === 0 && technique_pack === undefined) {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    values.push(id);
+    let template;
+    if (updates.length > 0) {
+      values.push(id);
+      values.push(req.user.org_id);
 
-    const result = await db.query(
-      `UPDATE engagement_templates
-       SET ${updates.join(', ')}
-       WHERE id = $${paramCount}
-       RETURNING *`,
-      values
-    );
+      const result = await db.query(
+        `UPDATE engagement_templates
+         SET ${updates.join(', ')}
+         WHERE id = $${paramCount} AND org_id = $${paramCount + 1}
+         RETURNING *`,
+        values
+      );
+      template = result.rows[0];
+    } else {
+      const result = await db.query('SELECT * FROM engagement_templates WHERE id = $1 AND org_id = $2', [id, req.user.org_id]);
+      template = result.rows[0];
+    }
 
-    res.json(result.rows[0]);
+    if (technique_pack !== undefined) {
+      await upsertTemplateTechniquePack(id, Array.isArray(technique_pack) ? technique_pack : []);
+    }
+
+    template.technique_pack = await getTemplateTechniquePack(id);
+    res.json(template);
   } catch (error) {
     console.error('Error updating template:', error);
     res.status(500).json({ error: 'Failed to update template' });
@@ -230,7 +276,7 @@ router.delete('/:id', async (req, res) => {
 
     // Check ownership
     const ownerCheck = await db.query(
-      'SELECT created_by FROM engagement_templates WHERE id = $1',
+      'SELECT created_by, org_id FROM engagement_templates WHERE id = $1',
       [id]
     );
 
@@ -238,13 +284,13 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Template not found' });
     }
 
-    if (ownerCheck.rows[0].created_by !== userId && !isAdmin) {
+    if (ownerCheck.rows[0].org_id !== req.user.org_id || (ownerCheck.rows[0].created_by !== userId && !isAdmin)) {
       return res.status(403).json({ error: 'You do not have permission to delete this template' });
     }
 
     const result = await db.query(
-      'DELETE FROM engagement_templates WHERE id = $1 RETURNING id, name',
-      [id]
+      'DELETE FROM engagement_templates WHERE id = $1 AND org_id = $2 RETURNING id, name',
+      [id, req.user.org_id]
     );
 
     res.json({ message: 'Template deleted', ...result.rows[0] });
@@ -271,8 +317,8 @@ router.post('/:id/apply', async (req, res) => {
     // Get template
     const templateResult = await db.query(
       `SELECT * FROM engagement_templates
-       WHERE id = $1 AND (is_public = true OR created_by = $2)`,
-      [id, userId]
+       WHERE id = $1 AND (is_public = true OR org_id = $3)`,
+      [id, userId, req.user.org_id]
     );
 
     if (templateResult.rows.length === 0) {
@@ -283,8 +329,8 @@ router.post('/:id/apply', async (req, res) => {
 
     // Verify engagement exists
     const engagementResult = await db.query(
-      'SELECT id FROM engagements WHERE id = $1',
-      [engagement_id]
+      'SELECT id FROM engagements WHERE id = $1 AND org_id = $2',
+      [engagement_id, req.user.org_id]
     );
 
     if (engagementResult.rows.length === 0) {

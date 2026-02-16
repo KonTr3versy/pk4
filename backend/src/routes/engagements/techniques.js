@@ -3,6 +3,7 @@ const db = require('../../db/connection');
 const { requireEngagement, requireTechniqueInEngagement } = require('../middleware/engagements');
 const { VALID_TECHNIQUE_STATUSES, validateAllowedValue } = require('../../validation/engagements');
 const { checkTechniquePositionColumn } = require('./technique-position');
+const { recordTechniqueHistory } = require('../../services/history');
 
 const router = express.Router({ mergeParams: true });
 
@@ -41,17 +42,17 @@ router.post('/:id/techniques', requireEngagement, async (req, res) => {
     if (supportsPosition) {
       const posResult = await db.query('SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM techniques WHERE engagement_id = $1', [id]);
       result = await db.query(
-        `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status, position)
-         VALUES ($1, $2, $3, $4, $5, 'ready', $6)
+        `INSERT INTO techniques (engagement_id, org_id, technique_id, technique_name, tactic, description, status, position)
+         VALUES ($1, $2, $3, $4, $5, $6, 'ready', $7)
          RETURNING *`,
-        [id, technique_id, technique_name, tactic, description || null, posResult.rows[0].next_pos]
+        [id, req.user.org_id, technique_id, technique_name, tactic, description || null, posResult.rows[0].next_pos]
       );
     } else {
       result = await db.query(
-        `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status)
-         VALUES ($1, $2, $3, $4, $5, 'ready')
+        `INSERT INTO techniques (engagement_id, org_id, technique_id, technique_name, tactic, description, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'ready')
          RETURNING *`,
-        [id, technique_id, technique_name, tactic, description || null]
+        [id, req.user.org_id, technique_id, technique_name, tactic, description || null]
       );
     }
 
@@ -98,17 +99,17 @@ router.post('/:id/techniques/bulk', requireEngagement, async (req, res) => {
       if (supportsPosition) {
         nextPosition += 1;
         insertResult = await client.query(
-          `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status, position)
-           VALUES ($1, $2, $3, $4, $5, 'ready', $6)
+          `INSERT INTO techniques (engagement_id, org_id, technique_id, technique_name, tactic, description, status, position)
+           VALUES ($1, $2, $3, $4, $5, $6, 'ready', $7)
            RETURNING *`,
-          [id, technique.technique_id, technique.technique_name, technique.tactic, technique.description || null, nextPosition]
+          [id, req.user.org_id, technique.technique_id, technique.technique_name, technique.tactic, technique.description || null, nextPosition]
         );
       } else {
         insertResult = await client.query(
-          `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status)
-           VALUES ($1, $2, $3, $4, $5, 'ready')
+          `INSERT INTO techniques (engagement_id, org_id, technique_id, technique_name, tactic, description, status)
+           VALUES ($1, $2, $3, $4, $5, $6, 'ready')
            RETURNING *`,
-          [id, technique.technique_id, technique.technique_name, technique.tactic, technique.description || null]
+          [id, req.user.org_id, technique.technique_id, technique.technique_name, technique.tactic, technique.description || null]
         );
       }
 
@@ -263,14 +264,17 @@ router.patch('/:id/techniques/:techniqueId/status', requireTechniqueInEngagement
     }
 
     values.push(techniqueId);
-    const result = await db.query(`UPDATE techniques SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`, values);
+    values.push(req.user.org_id);
+    const result = await db.query(`UPDATE techniques SET ${updates.join(', ')} WHERE id = $${paramCount} AND org_id = $${paramCount + 1} RETURNING *`, values);
     const updated = result.rows[0];
     if (updated) {
-      await db.query(
-        `INSERT INTO technique_history (technique_id, engagement_id, user_id, old_status, new_status, notes)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [updated.technique_id, updated.engagement_id, req.user?.id || null, oldStatus || null, updated.status || null, notes || null]
-      );
+      await recordTechniqueHistory({
+        engagementId: updated.engagement_id,
+        techniqueId: updated.technique_id,
+        userId: req.user?.id,
+        eventType: 'technique_status_transition',
+        payload: { old_status: oldStatus || null, new_status: updated.status || null, notes: notes || null },
+      });
     }
     res.json(updated);
   } catch (error) {
