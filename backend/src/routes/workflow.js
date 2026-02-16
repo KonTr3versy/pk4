@@ -50,6 +50,15 @@ const VALID_ACTION_SEVERITY = ['critical', 'high', 'medium', 'low', 'info'];
 
 const VALID_ACTION_STATUS = ['open', 'in_progress', 'complete', 'wont_fix'];
 
+const VALID_PLANNING_PHASE_NAMES = [
+  'objective_setting',
+  'logistics_planning',
+  'technical_gathering',
+  'authorization'
+];
+
+const VALID_PLANNING_PHASE_STATUSES = ['pending', 'in_progress', 'completed', 'skipped'];
+
 // Sanitize text input to prevent XSS
 function sanitizeText(text) {
   if (!text) return text;
@@ -111,6 +120,42 @@ async function verifyEngagementAccess(req, res, next) {
     res.status(500).json({ error: 'Failed to verify engagement access' });
   }
 }
+
+async function getPlanningPhaseForEngagement(phaseId, engagementId, orgId) {
+  return db.query(
+    `SELECT p.*
+     FROM engagement_planning_phases p
+     JOIN engagements e ON e.id = p.engagement_id
+     WHERE p.id = $1 AND p.engagement_id = $2 AND e.org_id = $3`,
+    [phaseId, engagementId, orgId]
+  );
+}
+
+function sanitizeTextArray(values) {
+  if (!Array.isArray(values)) return null;
+  return values
+    .map(v => sanitizeText(v))
+    .filter(v => typeof v === 'string' && v.trim().length > 0);
+}
+
+// =============================================================================
+// ROLE RESPONSIBILITY DEFAULTS
+// =============================================================================
+
+// GET /api/workflow/role-defaults
+router.get('/role-defaults', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, role, responsibilities, created_at
+       FROM role_responsibility_defaults
+       ORDER BY role ASC`
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching role defaults:', error);
+    res.status(500).json({ error: 'Failed to fetch role defaults' });
+  }
+});
 
 // =============================================================================
 // ENGAGEMENT GOALS
@@ -229,7 +274,7 @@ router.get('/:id/roles', verifyEngagementAccess, async (req, res) => {
 // POST /api/workflow/:id/roles
 router.post('/:id/roles', verifyEngagementAccess, async (req, res) => {
   try {
-    const { user_id, role, external_name, external_email } = req.body;
+    const { user_id, role, external_name, external_email, responsibilities } = req.body;
 
     // Validate role
     if (!role || !VALID_ROLES.includes(role)) {
@@ -253,16 +298,23 @@ router.post('/:id/roles', verifyEngagementAccess, async (req, res) => {
       return res.status(400).json({ error: 'Either user_id or external_name is required' });
     }
 
+    if (responsibilities !== undefined && !Array.isArray(responsibilities)) {
+      return res.status(400).json({ error: 'responsibilities must be an array when provided' });
+    }
+
+    const sanitizedResponsibilities = sanitizeTextArray(responsibilities);
+
     const result = await db.query(
-      `INSERT INTO engagement_roles (engagement_id, user_id, role, external_name, external_email)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO engagement_roles (engagement_id, user_id, role, external_name, external_email, responsibilities)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
       [
         req.params.id,
         user_id || null,
         role,
         sanitizeText(external_name?.trim()) || null,
-        external_email?.trim().toLowerCase() || null
+        external_email?.trim().toLowerCase() || null,
+        sanitizedResponsibilities || null
       ]
     );
 
@@ -277,7 +329,7 @@ router.post('/:id/roles', verifyEngagementAccess, async (req, res) => {
 router.put('/:id/roles/:roleId', verifyEngagementAccess, async (req, res) => {
   try {
     const { roleId } = req.params;
-    const { user_id, role, external_name, external_email } = req.body;
+    const { user_id, role, external_name, external_email, responsibilities } = req.body;
 
     if (!isValidUUID(roleId)) {
       return res.status(400).json({ error: 'Invalid role ID format' });
@@ -321,6 +373,14 @@ router.put('/:id/roles/:roleId', verifyEngagementAccess, async (req, res) => {
       values.push(external_email?.trim().toLowerCase() || null);
     }
 
+    if (responsibilities !== undefined) {
+      if (!Array.isArray(responsibilities)) {
+        return res.status(400).json({ error: 'responsibilities must be an array when provided' });
+      }
+      updates.push(`responsibilities = $${paramCount++}`);
+      values.push(sanitizeTextArray(responsibilities));
+    }
+
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
     }
@@ -343,6 +403,370 @@ router.put('/:id/roles/:roleId', verifyEngagementAccess, async (req, res) => {
   } catch (error) {
     console.error('Error updating role:', error);
     res.status(500).json({ error: 'Failed to update role' });
+  }
+});
+
+// =============================================================================
+// PLANNING PHASE WORKFLOW
+// =============================================================================
+
+// GET /api/workflow/:id/planning-phases
+router.get('/:id/planning-phases', verifyEngagementAccess, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT *
+       FROM engagement_planning_phases
+       WHERE engagement_id = $1
+       ORDER BY phase_order ASC, created_at ASC`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching planning phases:', error);
+    res.status(500).json({ error: 'Failed to fetch planning phases' });
+  }
+});
+
+// POST /api/workflow/:id/planning-phases
+router.post('/:id/planning-phases', verifyEngagementAccess, async (req, res) => {
+  try {
+    const { phase_name, phase_order, status, scheduled_date, completed_date, notes } = req.body;
+
+    if (!phase_name || !VALID_PLANNING_PHASE_NAMES.includes(phase_name)) {
+      return res.status(400).json({
+        error: `Invalid phase_name. Must be one of: ${VALID_PLANNING_PHASE_NAMES.join(', ')}`
+      });
+    }
+
+    if (!Number.isInteger(phase_order) || phase_order < 1 || phase_order > 4) {
+      return res.status(400).json({ error: 'phase_order must be an integer between 1 and 4' });
+    }
+
+    if (status !== undefined && !VALID_PLANNING_PHASE_STATUSES.includes(status)) {
+      return res.status(400).json({
+        error: `Invalid status. Must be one of: ${VALID_PLANNING_PHASE_STATUSES.join(', ')}`
+      });
+    }
+
+    const result = await db.query(
+      `INSERT INTO engagement_planning_phases
+      (engagement_id, phase_name, phase_order, status, scheduled_date, completed_date, notes)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *`,
+      [
+        req.params.id,
+        phase_name,
+        phase_order,
+        status || 'pending',
+        scheduled_date || null,
+        completed_date || null,
+        sanitizeText(notes) || null
+      ]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: 'This planning phase already exists for the engagement' });
+    }
+    console.error('Error creating planning phase:', error);
+    res.status(500).json({ error: 'Failed to create planning phase' });
+  }
+});
+
+// PUT /api/workflow/:id/planning-phases/:phaseId
+router.put('/:id/planning-phases/:phaseId', verifyEngagementAccess, async (req, res) => {
+  try {
+    const { phaseId } = req.params;
+    const { phase_name, phase_order, status, scheduled_date, completed_date, notes } = req.body;
+
+    if (!isValidUUID(phaseId)) {
+      return res.status(400).json({ error: 'Invalid phase ID format' });
+    }
+
+    if (phase_name !== undefined && !VALID_PLANNING_PHASE_NAMES.includes(phase_name)) {
+      return res.status(400).json({
+        error: `Invalid phase_name. Must be one of: ${VALID_PLANNING_PHASE_NAMES.join(', ')}`
+      });
+    }
+
+    if (phase_order !== undefined && (!Number.isInteger(phase_order) || phase_order < 1 || phase_order > 4)) {
+      return res.status(400).json({ error: 'phase_order must be an integer between 1 and 4' });
+    }
+
+    if (status !== undefined && !VALID_PLANNING_PHASE_STATUSES.includes(status)) {
+      return res.status(400).json({
+        error: `Invalid status. Must be one of: ${VALID_PLANNING_PHASE_STATUSES.join(', ')}`
+      });
+    }
+
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (phase_name !== undefined) {
+      updates.push(`phase_name = $${paramCount++}`);
+      values.push(phase_name);
+    }
+    if (phase_order !== undefined) {
+      updates.push(`phase_order = $${paramCount++}`);
+      values.push(phase_order);
+    }
+    if (status !== undefined) {
+      updates.push(`status = $${paramCount++}`);
+      values.push(status);
+    }
+    if (scheduled_date !== undefined) {
+      updates.push(`scheduled_date = $${paramCount++}`);
+      values.push(scheduled_date || null);
+    }
+    if (completed_date !== undefined) {
+      updates.push(`completed_date = $${paramCount++}`);
+      values.push(completed_date || null);
+    }
+    if (notes !== undefined) {
+      updates.push(`notes = $${paramCount++}`);
+      values.push(sanitizeText(notes) || null);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    values.push(phaseId, req.params.id);
+
+    const result = await db.query(
+      `UPDATE engagement_planning_phases
+       SET ${updates.join(', ')}
+       WHERE id = $${paramCount} AND engagement_id = $${paramCount + 1}
+       RETURNING *`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Planning phase not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating planning phase:', error);
+    res.status(500).json({ error: 'Failed to update planning phase' });
+  }
+});
+
+// GET /api/workflow/:id/planning-phases/:phaseId/attendees
+router.get('/:id/planning-phases/:phaseId/attendees', verifyEngagementAccess, async (req, res) => {
+  try {
+    const { phaseId } = req.params;
+
+    if (!isValidUUID(phaseId)) {
+      return res.status(400).json({ error: 'Invalid phase ID format' });
+    }
+
+    const phaseCheck = await getPlanningPhaseForEngagement(phaseId, req.params.id, req.user.org_id);
+    if (phaseCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Planning phase not found in this engagement' });
+    }
+
+    const result = await db.query(
+      `SELECT a.*, u.display_name AS user_name, u.username
+       FROM planning_phase_attendees a
+       LEFT JOIN users u ON a.user_id = u.id
+       WHERE a.phase_id = $1
+       ORDER BY a.created_at ASC`,
+      [phaseId]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching planning phase attendees:', error);
+    res.status(500).json({ error: 'Failed to fetch planning phase attendees' });
+  }
+});
+
+// POST /api/workflow/:id/planning-phases/:phaseId/attendees
+router.post('/:id/planning-phases/:phaseId/attendees', verifyEngagementAccess, async (req, res) => {
+  try {
+    const { phaseId } = req.params;
+    const { user_id, role, attended, notes } = req.body;
+
+    if (!isValidUUID(phaseId)) {
+      return res.status(400).json({ error: 'Invalid phase ID format' });
+    }
+
+    if (user_id && !isValidUUID(user_id)) {
+      return res.status(400).json({ error: 'Invalid user ID format' });
+    }
+
+    if (!user_id && (!role || !String(role).trim())) {
+      return res.status(400).json({ error: 'Either user_id or role is required' });
+    }
+
+    const phaseCheck = await getPlanningPhaseForEngagement(phaseId, req.params.id, req.user.org_id);
+    if (phaseCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Planning phase not found in this engagement' });
+    }
+
+    const result = await db.query(
+      `INSERT INTO planning_phase_attendees
+      (phase_id, user_id, role, attended, notes)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *`,
+      [
+        phaseId,
+        user_id || null,
+        sanitizeText(role) || null,
+        attended === undefined ? false : Boolean(attended),
+        sanitizeText(notes) || null
+      ]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating planning phase attendee:', error);
+    res.status(500).json({ error: 'Failed to create planning phase attendee' });
+  }
+});
+
+// GET /api/workflow/:id/planning-phases/:phaseId/outputs
+router.get('/:id/planning-phases/:phaseId/outputs', verifyEngagementAccess, async (req, res) => {
+  try {
+    const { phaseId } = req.params;
+
+    if (!isValidUUID(phaseId)) {
+      return res.status(400).json({ error: 'Invalid phase ID format' });
+    }
+
+    const phaseCheck = await getPlanningPhaseForEngagement(phaseId, req.params.id, req.user.org_id);
+    if (phaseCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Planning phase not found in this engagement' });
+    }
+
+    const result = await db.query(
+      `SELECT o.*, u.display_name AS completed_by_name
+       FROM planning_phase_outputs o
+       LEFT JOIN users u ON o.completed_by = u.id
+       WHERE o.phase_id = $1
+       ORDER BY o.created_at ASC`,
+      [phaseId]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching planning phase outputs:', error);
+    res.status(500).json({ error: 'Failed to fetch planning phase outputs' });
+  }
+});
+
+// POST /api/workflow/:id/planning-phases/:phaseId/outputs
+router.post('/:id/planning-phases/:phaseId/outputs', verifyEngagementAccess, async (req, res) => {
+  try {
+    const { phaseId } = req.params;
+    const { output_name, output_value, completed } = req.body;
+
+    if (!isValidUUID(phaseId)) {
+      return res.status(400).json({ error: 'Invalid phase ID format' });
+    }
+
+    if (!output_name || !String(output_name).trim()) {
+      return res.status(400).json({ error: 'output_name is required' });
+    }
+
+    const phaseCheck = await getPlanningPhaseForEngagement(phaseId, req.params.id, req.user.org_id);
+    if (phaseCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Planning phase not found in this engagement' });
+    }
+
+    const isCompleted = completed === undefined ? false : Boolean(completed);
+
+    const result = await db.query(
+      `INSERT INTO planning_phase_outputs
+      (phase_id, output_name, output_value, completed, completed_at, completed_by)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *`,
+      [
+        phaseId,
+        sanitizeText(output_name),
+        sanitizeText(output_value) || null,
+        isCompleted,
+        isCompleted ? new Date() : null,
+        isCompleted ? req.user.id : null
+      ]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating planning phase output:', error);
+    res.status(500).json({ error: 'Failed to create planning phase output' });
+  }
+});
+
+// PUT /api/workflow/:id/planning-phases/:phaseId/outputs/:outputId
+router.put('/:id/planning-phases/:phaseId/outputs/:outputId', verifyEngagementAccess, async (req, res) => {
+  try {
+    const { phaseId, outputId } = req.params;
+    const { output_name, output_value, completed } = req.body;
+
+    if (!isValidUUID(phaseId)) {
+      return res.status(400).json({ error: 'Invalid phase ID format' });
+    }
+    if (!isValidUUID(outputId)) {
+      return res.status(400).json({ error: 'Invalid output ID format' });
+    }
+
+    if (output_name !== undefined && !String(output_name).trim()) {
+      return res.status(400).json({ error: 'output_name cannot be blank' });
+    }
+
+    const phaseCheck = await getPlanningPhaseForEngagement(phaseId, req.params.id, req.user.org_id);
+    if (phaseCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Planning phase not found in this engagement' });
+    }
+
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (output_name !== undefined) {
+      updates.push(`output_name = $${paramCount++}`);
+      values.push(sanitizeText(output_name));
+    }
+    if (output_value !== undefined) {
+      updates.push(`output_value = $${paramCount++}`);
+      values.push(sanitizeText(output_value) || null);
+    }
+    if (completed !== undefined) {
+      const isCompleted = Boolean(completed);
+      updates.push(`completed = $${paramCount++}`);
+      values.push(isCompleted);
+      updates.push(`completed_at = $${paramCount++}`);
+      values.push(isCompleted ? new Date() : null);
+      updates.push(`completed_by = $${paramCount++}`);
+      values.push(isCompleted ? req.user.id : null);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    values.push(outputId, phaseId);
+
+    const result = await db.query(
+      `UPDATE planning_phase_outputs
+       SET ${updates.join(', ')}
+       WHERE id = $${paramCount} AND phase_id = $${paramCount + 1}
+       RETURNING *`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Planning phase output not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating planning phase output:', error);
+    res.status(500).json({ error: 'Failed to update planning phase output' });
   }
 });
 
