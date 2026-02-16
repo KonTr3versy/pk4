@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Target, Users, Table, Server, Monitor, CheckSquare,
-  FileText, AlertTriangle, Shield, ChevronLeft, Settings, BarChart3
+  FileText, AlertTriangle, Shield, ChevronLeft, Settings, BarChart3, ListChecks
 } from 'lucide-react';
 import * as api from '../../api/client';
 
@@ -11,6 +11,7 @@ import TechniqueExpectations from './TechniqueExpectations';
 import InfrastructureSetup from './InfrastructureSetup';
 import TargetSystems from './TargetSystems';
 import PlanApprovals from './PlanApprovals';
+import PlanningPhases from './PlanningPhases';
 import EngagementStateBar from './EngagementStateBar';
 import DocumentGenerator from './DocumentGenerator';
 import DocumentHistory from './DocumentHistory';
@@ -23,6 +24,7 @@ const TABS = [
   { id: 'goals', label: 'Goals', icon: Target },
   { id: 'roles', label: 'Roles', icon: Users },
   { id: 'expectations', label: 'Expectations', icon: Table },
+  { id: 'planningPhases', label: 'Planning Phases', icon: ListChecks },
   { id: 'infrastructure', label: 'Infrastructure', icon: Server },
   { id: 'targets', label: 'Targets', icon: Monitor },
   { id: 'approvals', label: 'Approvals', icon: CheckSquare },
@@ -158,6 +160,14 @@ export default function PlanningWorkflow({ engagement, onBack, onUpdate }) {
       case 'expectations':
         return (
           <TechniqueExpectations
+            engagementId={engagement.id}
+            onUpdate={onUpdate}
+          />
+        );
+
+      case 'planningPhases':
+        return (
+          <PlanningPhases
             engagementId={engagement.id}
             onUpdate={onUpdate}
           />
