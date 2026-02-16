@@ -19,9 +19,10 @@ router.get('/', async (req, res) => {
         COUNT(CASE WHEN t.status IN ('complete', 'done') THEN 1 END) as completed_count
       FROM engagements e
       LEFT JOIN techniques t ON e.id = t.engagement_id
+      WHERE e.org_id = $1
       GROUP BY e.id
       ORDER BY e.created_at DESC
-    `);
+    `, [req.user.org_id]);
 
     res.json(result.rows);
   } catch (error) {
@@ -48,10 +49,11 @@ router.post('/', async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO engagements
-       (name, description, methodology, start_date, end_date, red_team_lead, blue_team_lead, visibility_mode, template_id, last_used_template_id, plan_notes, objectives, control_attributions)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       (org_id, name, description, methodology, start_date, end_date, red_team_lead, blue_team_lead, visibility_mode, template_id, last_used_template_id, plan_notes, objectives, control_attributions)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING *`,
       [
+        req.user.org_id,
         name.trim(),
         description?.trim() || null,
         methodology || 'atomic',
@@ -78,15 +80,15 @@ router.post('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const engagementResult = await db.query('SELECT * FROM engagements WHERE id = $1', [id]);
+    const engagementResult = await db.query('SELECT * FROM engagements WHERE id = $1 AND org_id = $2', [id, req.user.org_id]);
 
     if (engagementResult.rows.length === 0) {
       return res.status(404).json({ error: 'Engagement not found' });
     }
 
     const techniquesResult = await db.query(
-      `SELECT * FROM techniques WHERE engagement_id = $1 ORDER BY created_at ASC`,
-      [id]
+      `SELECT * FROM techniques WHERE engagement_id = $1 AND org_id = $2 ORDER BY created_at ASC`,
+      [id, req.user.org_id]
     );
 
     const techniqueIds = techniquesResult.rows.map((t) => t.id);
@@ -157,9 +159,10 @@ router.put('/:id', async (req, res) => {
     }
 
     values.push(id);
+    values.push(req.user.org_id);
 
     const result = await db.query(
-      `UPDATE engagements SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`,
+      `UPDATE engagements SET ${updates.join(', ')} WHERE id = $${paramCount} AND org_id = $${paramCount + 1} RETURNING *`,
       values
     );
 
@@ -177,7 +180,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await db.query('DELETE FROM engagements WHERE id = $1 RETURNING id', [id]);
+    const result = await db.query('DELETE FROM engagements WHERE id = $1 AND org_id = $2 RETURNING id', [id, req.user.org_id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Engagement not found' });
@@ -198,7 +201,7 @@ router.post('/:id/duplicate', async (req, res) => {
     const { name } = req.body;
 
     await client.query('BEGIN');
-    const engagementResult = await client.query('SELECT * FROM engagements WHERE id = $1', [id]);
+    const engagementResult = await client.query('SELECT * FROM engagements WHERE id = $1 AND org_id = $2', [id, req.user.org_id]);
 
     if (engagementResult.rows.length === 0) {
       await client.query('ROLLBACK');
@@ -210,14 +213,14 @@ router.post('/:id/duplicate', async (req, res) => {
 
     const insertResult = await client.query(
       `INSERT INTO engagements
-       (name, description, methodology, start_date, end_date, red_team_lead, blue_team_lead, visibility_mode, template_id, last_used_template_id, plan_notes, objectives, control_attributions, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'draft')
+       (org_id, name, description, methodology, start_date, end_date, red_team_lead, blue_team_lead, visibility_mode, template_id, last_used_template_id, plan_notes, objectives, control_attributions, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'draft')
        RETURNING *`,
-      [newName, engagement.description, engagement.methodology, engagement.start_date, engagement.end_date, engagement.red_team_lead, engagement.blue_team_lead, engagement.visibility_mode || 'open', engagement.template_id, engagement.template_id, engagement.plan_notes, engagement.objectives, engagement.control_attributions]
+      [req.user.org_id, newName, engagement.description, engagement.methodology, engagement.start_date, engagement.end_date, engagement.red_team_lead, engagement.blue_team_lead, engagement.visibility_mode || 'open', engagement.template_id, engagement.template_id, engagement.plan_notes, engagement.objectives, engagement.control_attributions]
     );
 
     const newEngagement = insertResult.rows[0];
-    const techniquesResult = await client.query('SELECT technique_id, technique_name, tactic, description FROM techniques WHERE engagement_id = $1', [id]);
+    const techniquesResult = await client.query('SELECT technique_id, technique_name, tactic, description FROM techniques WHERE engagement_id = $1', [id, req.user.org_id]);
 
     const supportsPosition = await checkTechniquePositionColumn();
     let position = 0;
@@ -226,15 +229,15 @@ router.post('/:id/duplicate', async (req, res) => {
       if (supportsPosition) {
         position += 1;
         await client.query(
-          `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status, position)
-           VALUES ($1, $2, $3, $4, $5, 'ready', $6)`,
-          [newEngagement.id, technique.technique_id, technique.technique_name, technique.tactic, technique.description, position]
+          `INSERT INTO techniques (engagement_id, org_id, technique_id, technique_name, tactic, description, status, position)
+           VALUES ($1, $2, $3, $4, $5, $6, 'ready', $7)`,
+          [newEngagement.id, req.user.org_id, technique.technique_id, technique.technique_name, technique.tactic, technique.description, position]
         );
       } else {
         await client.query(
-          `INSERT INTO techniques (engagement_id, technique_id, technique_name, tactic, description, status)
-           VALUES ($1, $2, $3, $4, $5, 'ready')`,
-          [newEngagement.id, technique.technique_id, technique.technique_name, technique.tactic, technique.description]
+          `INSERT INTO techniques (engagement_id, org_id, technique_id, technique_name, tactic, description, status)
+           VALUES ($1, $2, $3, $4, $5, $6, 'ready')`,
+          [newEngagement.id, req.user.org_id, technique.technique_id, technique.technique_name, technique.tactic, technique.description]
         );
       }
 

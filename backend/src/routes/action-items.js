@@ -11,6 +11,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
+const { recordTechniqueHistory } = require('../services/history');
 
 // =============================================================================
 // CONSTANTS
@@ -57,8 +58,8 @@ async function verifyEngagementAccess(req, res, next) {
 
   try {
     const result = await db.query(
-      'SELECT id, status FROM engagements WHERE id = $1',
-      [id]
+      'SELECT id, status FROM engagements WHERE id = $1 AND org_id = $2',
+      [id, req.user.org_id]
     );
 
     if (result.rows.length === 0) {
@@ -141,10 +142,10 @@ router.get('/:id', verifyEngagementAccess, async (req, res) => {
       FROM action_items ai
       LEFT JOIN users u ON ai.owner_id = u.id
       LEFT JOIN techniques t ON ai.technique_id = t.id
-      WHERE ai.engagement_id = $1
+      WHERE ai.engagement_id = $1 AND ai.org_id = $2
     `;
-    const values = [req.params.id];
-    let paramCount = 2;
+    const values = [req.params.id, req.user.org_id];
+    let paramCount = 3;
 
     // Filter by status
     if (status) {
@@ -242,8 +243,8 @@ router.post('/:id', verifyEngagementAccess, async (req, res) => {
     // If technique_id provided, verify it belongs to this engagement
     if (technique_id) {
       const techCheck = await db.query(
-        'SELECT id FROM techniques WHERE id = $1 AND engagement_id = $2',
-        [technique_id, req.params.id]
+        'SELECT id FROM techniques WHERE id = $1 AND engagement_id = $2 AND org_id = $3',
+        [technique_id, req.params.id, req.user.org_id]
       );
       if (techCheck.rows.length === 0) {
         return res.status(400).json({ error: 'Technique not found in this engagement' });
@@ -252,11 +253,12 @@ router.post('/:id', verifyEngagementAccess, async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO action_items
-       (engagement_id, technique_id, title, description, severity, owner_id, due_date, retest_required)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       (engagement_id, org_id, technique_id, title, description, severity, owner_id, due_date, retest_required)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
       [
         req.params.id,
+        req.user.org_id,
         technique_id || null,
         sanitizeText(title.trim()),
         sanitizeText(description),
@@ -266,7 +268,6 @@ router.post('/:id', verifyEngagementAccess, async (req, res) => {
         retest_required || false
       ]
     );
-
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating action item:', error);
@@ -363,11 +364,12 @@ router.put('/item/:itemId', verifyActionItemAccess, async (req, res) => {
     }
 
     values.push(req.actionItem.id);
+    values.push(req.user.org_id);
 
     const result = await db.query(
       `UPDATE action_items
        SET ${updates.join(', ')}
-       WHERE id = $${paramCount}
+       WHERE id = $${paramCount} AND org_id = $${paramCount + 1}
        RETURNING *`,
       values
     );
@@ -390,8 +392,8 @@ router.delete('/item/:itemId', verifyActionItemAccess, async (req, res) => {
     const { itemId } = req.params;
 
     const result = await db.query(
-      'DELETE FROM action_items WHERE id = $1 RETURNING id',
-      [req.actionItem.id]
+      'DELETE FROM action_items WHERE id = $1 AND org_id = $2 RETURNING id',
+      [req.actionItem.id, req.user.org_id]
     );
 
     if (result.rows.length === 0) {
@@ -420,8 +422,8 @@ router.get('/:id/techniques/:techId/results', verifyEngagementAccess, async (req
 
     // Verify technique belongs to engagement
     const techCheck = await db.query(
-      'SELECT id FROM techniques WHERE id = $1 AND engagement_id = $2',
-      [techId, req.params.id]
+      'SELECT id, technique_id FROM techniques WHERE id = $1 AND engagement_id = $2 AND org_id = $3',
+      [techId, req.params.id, req.user.org_id]
     );
 
     if (techCheck.rows.length === 0) {
@@ -463,8 +465,8 @@ router.post('/:id/techniques/:techId/results', verifyEngagementAccess, async (re
 
     // Verify technique belongs to engagement
     const techCheck = await db.query(
-      'SELECT id FROM techniques WHERE id = $1 AND engagement_id = $2',
-      [techId, req.params.id]
+      'SELECT id, technique_id FROM techniques WHERE id = $1 AND engagement_id = $2 AND org_id = $3',
+      [techId, req.params.id, req.user.org_id]
     );
 
     if (techCheck.rows.length === 0) {
@@ -503,6 +505,18 @@ router.post('/:id/techniques/:techId/results', verifyEngagementAccess, async (re
         sanitizeText(artifacts_list)
       ]
     );
+
+    await recordTechniqueHistory({
+      engagementId: req.params.id,
+      techniqueId: techCheck.rows[0].technique_id,
+      userId: req.user?.id,
+      eventType: 'technique_results_updated',
+      payload: {
+        result_id: result.rows[0].id,
+        alert_received: result.rows[0].alert_received,
+        telemetry_available: result.rows[0].telemetry_available,
+      },
+    });
 
     res.status(201).json(result.rows[0]);
   } catch (error) {

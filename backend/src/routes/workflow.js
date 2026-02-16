@@ -16,6 +16,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
+const { recordTechniqueHistory } = require('../services/history');
 
 // =============================================================================
 // INPUT VALIDATION HELPERS
@@ -95,8 +96,8 @@ async function verifyEngagementAccess(req, res, next) {
 
   try {
     const result = await db.query(
-      'SELECT id, status FROM engagements WHERE id = $1',
-      [id]
+      'SELECT id, status FROM engagements WHERE id = $1 AND org_id = $2',
+      [id, req.user.org_id]
     );
 
     if (result.rows.length === 0) {
@@ -162,6 +163,14 @@ router.post('/:id/goals', verifyEngagementAccess, async (req, res) => {
        RETURNING *`,
       [req.params.id, goal_type, sanitizeText(custom_text?.trim()), is_primary || false]
     );
+
+    await recordTechniqueHistory({
+      engagementId: req.params.id,
+      techniqueId: techCheck.rows[0].technique_id,
+      userId: req.user?.id,
+      eventType: 'technique_expectation_created',
+      payload: result.rows[0],
+    });
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -377,8 +386,8 @@ router.get('/:id/techniques/:techId/expectations', verifyEngagementAccess, async
 
     // Verify technique belongs to engagement
     const techCheck = await db.query(
-      'SELECT id FROM techniques WHERE id = $1 AND engagement_id = $2',
-      [techId, req.params.id]
+      'SELECT id, technique_id FROM techniques WHERE id = $1 AND engagement_id = $2 AND org_id = $3',
+      [techId, req.params.id, req.user.org_id]
     );
 
     if (techCheck.rows.length === 0) {
@@ -417,8 +426,8 @@ router.post('/:id/techniques/:techId/expectations', verifyEngagementAccess, asyn
 
     // Verify technique belongs to engagement
     const techCheck = await db.query(
-      'SELECT id FROM techniques WHERE id = $1 AND engagement_id = $2',
-      [techId, req.params.id]
+      'SELECT id, technique_id FROM techniques WHERE id = $1 AND engagement_id = $2 AND org_id = $3',
+      [techId, req.params.id, req.user.org_id]
     );
 
     if (techCheck.rows.length === 0) {
@@ -463,6 +472,14 @@ router.post('/:id/techniques/:techId/expectations', verifyEngagementAccess, asyn
       ]
     );
 
+    await recordTechniqueHistory({
+      engagementId: req.params.id,
+      techniqueId: techCheck.rows[0].technique_id,
+      userId: req.user?.id,
+      eventType: 'technique_expectation_created',
+      payload: result.rows[0],
+    });
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
     if (error.code === '23505') {
@@ -505,6 +522,11 @@ router.put('/:id/techniques/:techId/expectations', verifyEngagementAccess, async
       return res.status(400).json({ error: `Invalid classification` });
     }
 
+    const techniqueLookup = await db.query(
+      'SELECT technique_id FROM techniques WHERE id = $1 AND engagement_id = $2 AND org_id = $3',
+      [techId, req.params.id, req.user.org_id]
+    );
+
     const result = await db.query(
       `UPDATE technique_expectations SET
          expected_data_sources = COALESCE($2, expected_data_sources),
@@ -531,6 +553,16 @@ router.put('/:id/techniques/:techId/expectations', verifyEngagementAccess, async
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Expectations not found. Use POST to create.' });
+    }
+
+    if (techniqueLookup.rows.length > 0) {
+      await recordTechniqueHistory({
+        engagementId: req.params.id,
+        techniqueId: techniqueLookup.rows[0].technique_id,
+        userId: req.user?.id,
+        eventType: 'technique_expectation_updated',
+        payload: result.rows[0],
+      });
     }
 
     res.json(result.rows[0]);

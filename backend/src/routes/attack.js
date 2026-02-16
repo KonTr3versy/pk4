@@ -66,19 +66,84 @@ router.get('/techniques', async (req, res) => {
 router.get('/techniques/:techniqueId', async (req, res) => {
   const domain = req.query.domain || 'enterprise';
   const { techniqueId } = req.params;
-  const result = await db.query(
-    `SELECT external_id AS technique_id, name, description, platforms, permissions_required,
+  const baseResult = await db.query(
+    `SELECT external_id AS technique_id, stix_id, name, description, platforms, permissions_required,
       detection, data_sources, is_subtechnique, parent_external_id, raw_object
      FROM attack_techniques
      WHERE domain = $1 AND external_id = $2`,
     [domain, techniqueId]
   );
 
-  if (!result.rows.length) {
+  if (!baseResult.rows.length) {
     return res.status(404).json({ error: 'Technique not found' });
   }
 
-  return res.json(result.rows[0]);
+  const technique = baseResult.rows[0];
+
+  const [
+    mitigationsResult,
+    softwareResult,
+    groupsResult,
+    dataSourceResult,
+    dataComponentResult,
+  ] = await Promise.all([
+    db.query(
+      `SELECT m.external_id, m.name, m.description
+       FROM mitigation_technique_map mtm
+       JOIN attack_mitigations m ON m.stix_id = mtm.mitigation_stix_id AND m.domain = mtm.domain
+       WHERE mtm.domain = $1 AND mtm.technique_stix_id = $2
+       ORDER BY m.external_id`,
+      [domain, technique.stix_id]
+    ),
+    db.query(
+      `SELECT s.external_id, s.name, s.software_type, s.description
+       FROM software_technique_map stm
+       JOIN attack_software s ON s.stix_id = stm.software_stix_id AND s.domain = stm.domain
+       WHERE stm.domain = $1 AND stm.technique_stix_id = $2
+       ORDER BY s.external_id`,
+      [domain, technique.stix_id]
+    ),
+    db.query(
+      `SELECT g.external_id, g.name, g.description
+       FROM group_technique_map gtm
+       JOIN attack_groups g ON g.stix_id = gtm.group_stix_id AND g.domain = gtm.domain
+       WHERE gtm.domain = $1 AND gtm.technique_stix_id = $2
+       ORDER BY g.external_id`,
+      [domain, technique.stix_id]
+    ),
+    db.query(
+      `SELECT DISTINCT ds.external_id, ds.name, ds.description
+       FROM attack_datasources ds
+       JOIN attack_datacomponents dc ON dc.datasource_stix_id = ds.stix_id AND dc.domain = ds.domain
+       JOIN attack_relationships rel ON rel.domain = dc.domain
+       WHERE ds.domain = $1
+         AND rel.relationship_type = 'detects'
+         AND rel.source_ref = dc.stix_id
+         AND rel.target_ref = $2
+       ORDER BY ds.name`,
+      [domain, technique.stix_id]
+    ),
+    db.query(
+      `SELECT DISTINCT dc.external_id, dc.name, dc.description
+       FROM attack_datacomponents dc
+       JOIN attack_relationships rel ON rel.domain = dc.domain
+       WHERE dc.domain = $1
+         AND rel.relationship_type = 'detects'
+         AND rel.source_ref = dc.stix_id
+         AND rel.target_ref = $2
+       ORDER BY dc.name`,
+      [domain, technique.stix_id]
+    )
+  ]);
+
+  return res.json({
+    ...technique,
+    mitigations: mitigationsResult.rows,
+    data_sources: dataSourceResult.rows,
+    data_components: dataComponentResult.rows,
+    software: softwareResult.rows,
+    groups: groupsResult.rows,
+  });
 });
 
 router.get('/groups', async (req, res) => {

@@ -6,7 +6,10 @@
  * for each API endpoint.
  */
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '') || '/api';
+const rawApiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const API_BASE = rawApiBase
+  ? (rawApiBase.endsWith('/api') ? rawApiBase : `${rawApiBase}/api`)
+  : '/api';
 
 
 // =============================================================================
