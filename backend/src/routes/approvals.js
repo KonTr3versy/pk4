@@ -18,7 +18,7 @@ const db = require('../db/connection');
 // CONSTANTS
 // =============================================================================
 
-const VALID_APPROVAL_ROLES = ['coordinator', 'sponsor', 'red_lead', 'blue_lead'];
+const VALID_APPROVAL_ROLES = ['coordinator', 'stakeholder', 'red_team_lead', 'blue_team_lead'];
 
 const VALID_STATUS_TRANSITIONS = {
   'draft': ['planning'],
@@ -77,7 +77,7 @@ async function verifyEngagementAccess(req, res, next) {
   }
 }
 
-// Check if user has coordinator/sponsor role for approval actions
+// Check if user has coordinator/stakeholder role for approval actions
 async function requireApprovalAuthority(req, res, next) {
   const userId = req.user?.id;
   const engagementId = req.params.id;
@@ -94,13 +94,13 @@ async function requireApprovalAuthority(req, res, next) {
   try {
     const roleCheck = await db.query(
       `SELECT role FROM engagement_roles
-       WHERE engagement_id = $1 AND user_id = $2 AND role IN ('coordinator', 'sponsor')`,
+       WHERE engagement_id = $1 AND user_id = $2 AND role IN ('coordinator', 'stakeholder')`,
       [engagementId, userId]
     );
 
     if (roleCheck.rows.length === 0) {
       return res.status(403).json({
-        error: 'Only coordinators and sponsors can manage approvals'
+        error: 'Only coordinators and stakeholders can manage approvals'
       });
     }
 
@@ -131,7 +131,7 @@ router.get('/:id', verifyEngagementAccess, async (req, res) => {
     // Get required approvals (based on engagement roles)
     const rolesResult = await db.query(
       `SELECT DISTINCT role FROM engagement_roles
-       WHERE engagement_id = $1 AND role IN ('coordinator', 'sponsor', 'red_lead', 'blue_lead')`,
+       WHERE engagement_id = $1 AND role IN ('coordinator', 'stakeholder', 'red_team_lead', 'blue_team_lead')`,
       [req.params.id]
     );
 
@@ -290,7 +290,7 @@ router.post('/:id/transition', verifyEngagementAccess, requireApprovalAuthority,
 
       const rolesResult = await db.query(
         `SELECT DISTINCT role FROM engagement_roles
-         WHERE engagement_id = $1 AND role IN ('coordinator', 'sponsor', 'red_lead', 'blue_lead')`,
+         WHERE engagement_id = $1 AND role IN ('coordinator', 'stakeholder', 'red_team_lead', 'blue_team_lead')`,
         [req.params.id]
       );
 

@@ -17,6 +17,7 @@ const approvalRoutes = require('./routes/approvals');
 const documentRoutes = require('./routes/documents');
 const actionItemRoutes = require('./routes/action-items');
 const analyticsRoutes = require('./routes/analytics');
+const threatPipelineRoutes = require('./routes/threat-pipeline');
 const adminAttackRoutes = require('./routes/admin-attack');
 const adminRoutes = require('./routes/admin');
 
@@ -152,6 +153,7 @@ app.use('/api/approvals', requireAuth, approvalRoutes);
 app.use('/api/documents', requireAuth, documentRoutes);
 app.use('/api/action-items', requireAuth, actionItemRoutes);
 app.use('/api/analytics', requireAuth, analyticsRoutes);
+app.use('/api/threat-pipeline', requireAuth, threatPipelineRoutes);
 app.use('/api/admin/attack', requireAuth, adminAttackRoutes);
 app.use('/api/admin', requireAuth, adminRoutes);
 
