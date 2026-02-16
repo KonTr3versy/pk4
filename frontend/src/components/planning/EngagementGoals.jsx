@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Target, Plus, Trash2, Loader2, CheckCircle } from 'lucide-react';
+import { Target, Plus, Trash2, Loader2, CheckCircle, Star } from 'lucide-react';
 import * as api from '../../api/client';
 
 const GOAL_TYPES = [
-  { id: 'collaborative_culture', label: 'Build Collaborative Culture', description: 'Foster collaboration between red and blue teams' },
-  { id: 'test_attack_chains', label: 'Test Attack Chains', description: 'Validate detection of multi-stage attacks' },
-  { id: 'train_defenders', label: 'Train Defenders', description: 'Improve blue team skills and response' },
-  { id: 'test_new_ttps', label: 'Test New TTPs', description: 'Evaluate coverage for emerging threats' },
-  { id: 'red_team_replay', label: 'Red Team Replay', description: 'Replay previous red team findings' },
-  { id: 'test_processes', label: 'Test Processes', description: 'Validate incident response procedures' },
-  { id: 'custom', label: 'Custom Goal', description: 'Define a custom engagement goal' }
+  { id: 'validate_detection', label: 'Validate Detection', description: 'Confirm detection logic identifies expected attacker behavior.' },
+  { id: 'test_response', label: 'Test Response', description: 'Exercise analyst triage and incident response procedures.' },
+  { id: 'measure_coverage', label: 'Measure Coverage', description: 'Identify ATT&CK coverage strengths, gaps, and blind spots.' },
+  { id: 'train_team', label: 'Train Team', description: 'Improve red/blue collaboration and operator readiness.' },
+  { id: 'compliance_evidence', label: 'Compliance Evidence', description: 'Collect evidence for audit/regulatory readiness.' },
+  { id: 'tool_evaluation', label: 'Tool Evaluation', description: 'Assess efficacy and tuning needs of security tools.' },
+  { id: 'threat_emulation', label: 'Threat Emulation', description: 'Emulate realistic adversary behaviors for priority threats.' },
+  { id: 'custom', label: 'Custom Goal', description: 'Capture a custom objective not covered above.' }
 ];
 
 export default function EngagementGoals({ engagementId, onUpdate }) {
@@ -18,7 +19,7 @@ export default function EngagementGoals({ engagementId, onUpdate }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newGoal, setNewGoal] = useState({ goal_type: '', description: '' });
+  const [newGoal, setNewGoal] = useState({ goal_type: '', custom_text: '', is_primary: false });
 
   useEffect(() => {
     loadGoals();
@@ -27,6 +28,7 @@ export default function EngagementGoals({ engagementId, onUpdate }) {
   async function loadGoals() {
     try {
       setLoading(true);
+      setError(null);
       const data = await api.getEngagementGoals(engagementId);
       setGoals(data || []);
     } catch (err) {
@@ -39,12 +41,24 @@ export default function EngagementGoals({ engagementId, onUpdate }) {
 
   async function handleAddGoal() {
     if (!newGoal.goal_type) return;
+    if (newGoal.goal_type === 'custom' && !newGoal.custom_text.trim()) {
+      setError('Custom goals require details');
+      return;
+    }
 
     try {
       setSaving(true);
-      const saved = await api.saveEngagementGoal(engagementId, newGoal);
-      setGoals([...goals, saved]);
-      setNewGoal({ goal_type: '', description: '' });
+      setError(null);
+      const saved = await api.saveEngagementGoal(engagementId, {
+        goal_type: newGoal.goal_type,
+        custom_text: newGoal.goal_type === 'custom' ? newGoal.custom_text : null,
+        is_primary: newGoal.is_primary,
+      });
+      setGoals((prev) => {
+        const next = [...prev, saved];
+        return next.sort((a, b) => Number(Boolean(b.is_primary)) - Number(Boolean(a.is_primary)));
+      });
+      setNewGoal({ goal_type: '', custom_text: '', is_primary: false });
       setShowAddForm(false);
       onUpdate?.();
     } catch (err) {
@@ -56,6 +70,7 @@ export default function EngagementGoals({ engagementId, onUpdate }) {
 
   async function handleDeleteGoal(goalId) {
     try {
+      setError(null);
       await api.deleteEngagementGoal(engagementId, goalId);
       setGoals(goals.filter(g => g.id !== goalId));
       onUpdate?.();
@@ -85,7 +100,7 @@ export default function EngagementGoals({ engagementId, onUpdate }) {
             Engagement Goals
           </h3>
           <p className="text-sm text-gray-400 mt-1">
-            Define PTEF-aligned goals for this engagement
+            Define planning goals aligned to the kickoff framework
           </p>
         </div>
         <button
@@ -126,9 +141,16 @@ export default function EngagementGoals({ engagementId, onUpdate }) {
                 <div className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 text-green-400 mt-0.5" />
                   <div>
-                    <div className="font-medium text-sm">{typeInfo.label}</div>
-                    {goal.description && (
-                      <p className="text-xs text-gray-400 mt-1">{goal.description}</p>
+                    <div className="font-medium text-sm flex items-center gap-2">
+                      {typeInfo.label}
+                      {goal.is_primary && (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                          <Star className="w-3 h-3" /> Primary
+                        </span>
+                      )}
+                    </div>
+                    {goal.custom_text && (
+                      <p className="text-xs text-gray-400 mt-1">{goal.custom_text}</p>
                     )}
                   </div>
                 </div>
@@ -166,24 +188,34 @@ export default function EngagementGoals({ engagementId, onUpdate }) {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              Description (optional)
-            </label>
-            <textarea
-              value={newGoal.description}
-              onChange={(e) => setNewGoal({ ...newGoal, description: e.target.value })}
-              placeholder="Add specific details about this goal..."
-              rows={2}
-              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500 resize-none"
+          {newGoal.goal_type === 'custom' && (
+            <div>
+              <label className="block text-sm font-medium mb-2">Custom goal details</label>
+              <textarea
+                value={newGoal.custom_text}
+                onChange={(e) => setNewGoal({ ...newGoal, custom_text: e.target.value })}
+                placeholder="Describe the custom goal..."
+                rows={2}
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-purple-500 resize-none"
+              />
+            </div>
+          )}
+
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={newGoal.is_primary}
+              onChange={(e) => setNewGoal({ ...newGoal, is_primary: e.target.checked })}
+              className="rounded border-gray-600 bg-gray-900"
             />
-          </div>
+            Mark as primary goal
+          </label>
 
           <div className="flex gap-2">
             <button
               onClick={() => {
                 setShowAddForm(false);
-                setNewGoal({ goal_type: '', description: '' });
+                setNewGoal({ goal_type: '', custom_text: '', is_primary: false });
               }}
               className="flex-1 px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"
             >
