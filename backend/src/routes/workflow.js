@@ -1325,4 +1325,61 @@ router.delete('/:id/infrastructure/:infraId', verifyEngagementAccess, async (req
   }
 });
 
+
+// =============================================================================
+// WIP LIMITS (Execute Phase)
+// =============================================================================
+
+const VALID_WIP_COLUMNS = ['todo', 'in_progress', 'blocked', 'triage', 'validation', 'done'];
+
+// GET /api/workflow/:id/wip-limits
+router.get('/:id/wip-limits', verifyEngagementAccess, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM engagement_wip_limits
+       WHERE engagement_id = $1
+       ORDER BY column_status ASC`,
+      [req.params.id]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching WIP limits:', error);
+    res.status(500).json({ error: 'Failed to fetch WIP limits' });
+  }
+});
+
+// PUT /api/workflow/:id/wip-limits/:columnStatus
+router.put('/:id/wip-limits/:columnStatus', verifyEngagementAccess, async (req, res) => {
+  try {
+    const { columnStatus } = req.params;
+    const { max_items } = req.body;
+
+    if (!VALID_WIP_COLUMNS.includes(columnStatus)) {
+      return res.status(400).json({ error: `Invalid column status. Must be one of: ${VALID_WIP_COLUMNS.join(', ')}` });
+    }
+
+    const maxItems = Number(max_items);
+    if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 100) {
+      return res.status(400).json({ error: 'max_items must be an integer between 1 and 100' });
+    }
+
+    const result = await db.query(
+      `INSERT INTO engagement_wip_limits (engagement_id, column_status, max_items)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (engagement_id, column_status)
+       DO UPDATE SET
+         max_items = EXCLUDED.max_items,
+         updated_at = NOW()
+       RETURNING *`,
+      [req.params.id, columnStatus, maxItems]
+    );
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating WIP limit:', error);
+    res.status(500).json({ error: 'Failed to update WIP limit' });
+  }
+});
+
 module.exports = router;
