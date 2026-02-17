@@ -73,10 +73,27 @@ app.use(cors({
 const createAuthRateLimiter = () => {
   const windowMs = parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS || `${15 * 60 * 1000}`, 10);
   const max = parseInt(process.env.AUTH_RATE_LIMIT_MAX || '10', 10);
+  const maxTrackedIps = parseInt(process.env.AUTH_RATE_LIMIT_MAX_TRACKED_IPS || '5000', 10);
   const attempts = new Map();
+
+  function cleanup(now) {
+    for (const [ip, state] of attempts.entries()) {
+      if (now > state.resetAt) {
+        attempts.delete(ip);
+      }
+    }
+
+    while (attempts.size > maxTrackedIps) {
+      const oldestKey = attempts.keys().next().value;
+      if (!oldestKey) break;
+      attempts.delete(oldestKey);
+    }
+  }
 
   return (req, res, next) => {
     const now = Date.now();
+    cleanup(now);
+
     const key = req.ip || req.socket?.remoteAddress || 'unknown';
     const current = attempts.get(key);
 
