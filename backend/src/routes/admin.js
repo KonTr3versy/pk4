@@ -1,8 +1,19 @@
 const express = require('express');
 const { requireAdmin } = require('../middleware/auth');
-const { upsertOrgLicense } = require('../services/licensing');
+const { upsertOrgLicense, getOrgLicenseStatus } = require('../services/licensing');
 
 const router = express.Router();
+
+router.get('/license', requireAdmin, async (req, res) => {
+  try {
+    const orgId = req.user?.org_id;
+    const status = await getOrgLicenseStatus(orgId);
+    return res.json(status);
+  } catch (error) {
+    console.error('Error getting license:', error);
+    return res.status(500).json({ error: 'Failed to get license status' });
+  }
+});
 
 router.post('/license', requireAdmin, async (req, res) => {
   try {

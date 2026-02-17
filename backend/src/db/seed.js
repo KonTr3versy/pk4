@@ -149,6 +149,19 @@ const threatActors = [
   }
 ];
 
+const starterPacks = [
+  { name: 'Ransomware Prep', description: 'Credential access + lateral movement', domain: 'enterprise', techniques: ['T1003.001','T1059.001','T1021.002','T1486','T1562.001','T1078','T1047','T1082'] },
+  { name: 'Credential Access Starter', description: 'Core credential theft checks', domain: 'enterprise', techniques: ['T1003.001','T1003.002','T1558.003','T1555','T1110.003','T1552.001','T1550.002','T1056.001'] },
+  { name: 'Discovery & Recon', description: 'Post-compromise discovery activity', domain: 'enterprise', techniques: ['T1082','T1083','T1018','T1016','T1057','T1049','T1087.001','T1124'] },
+  { name: 'Lateral Movement Starter', description: 'Movement techniques for enterprise environments', domain: 'enterprise', techniques: ['T1021.001','T1021.002','T1021.006','T1550.003','T1570','T1210','T1078','T1047'] },
+  { name: 'Exfiltration Checks', description: 'Data staging and transfer checks', domain: 'enterprise', techniques: ['T1560.001','T1074.001','T1041','T1048.003','T1567.002','T1020','T1537','T1071.001'] },
+  { name: 'Windows Logging Validation', description: 'High-signal Windows telemetry checks', domain: 'enterprise', techniques: ['T1059.003','T1047','T1053.005','T1547.001','T1070.001','T1112','T1105','T1218.011'] },
+  { name: 'M365 Token Abuse', description: 'Cloud token abuse starter', domain: 'enterprise', techniques: ['T1528','T1530','T1078.004','T1550.001','T1114.001','T1098','T1087.004','T1567.002'] },
+  { name: 'Defense Evasion Starter', description: 'Quick evasion checks', domain: 'enterprise', techniques: ['T1027','T1036.005','T1562.001','T1070.004','T1218.011','T1055','T1140','T1553.002'] },
+  { name: 'Execution Starter', description: 'Command execution paths', domain: 'enterprise', techniques: ['T1059.001','T1059.003','T1047','T1204.002','T1106','T1569.002','T1129','T1203'] },
+  { name: 'Persistence Starter', description: 'Common persistence mechanisms', domain: 'enterprise', techniques: ['T1547.001','T1053.005','T1136.001','T1543.003','T1546.003','T1098','T1505.003','T1112'] },
+];
+
 // =============================================================================
 // SEED FUNCTIONS
 // =============================================================================
@@ -276,6 +289,30 @@ async function seedTechniqueMetadata() {
   console.log(`  ✅ Updated metadata for ${techniqueMetadata.length} techniques`);
 }
 
+async function seedStarterPacks() {
+  console.log('\n📦 Seeding starter packs...');
+  for (const pack of starterPacks) {
+    const created = await db.query(
+      `INSERT INTO packs (org_id, name, description, domain, tactics)
+       VALUES (NULL, $1, $2, $3, '{}')
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [pack.name, pack.description, pack.domain]
+    );
+    const existing = created.rows[0] ? created.rows[0] : (await db.query('SELECT id FROM packs WHERE org_id IS NULL AND name = $1', [pack.name])).rows[0];
+    if (!existing?.id) continue;
+    await db.query('DELETE FROM pack_techniques WHERE pack_id = $1', [existing.id]);
+    for (let i = 0; i < pack.techniques.length; i += 1) {
+      await db.query(
+        `INSERT INTO pack_techniques (pack_id, technique_id, order_index)
+         VALUES ($1, $2, $3)`,
+        [existing.id, pack.techniques[i], i + 1]
+      );
+    }
+    console.log(`  ✅ Starter pack: ${pack.name}`);
+  }
+}
+
 async function runSeeds() {
   console.log('🌱 Running database seeds...\n');
 
@@ -283,6 +320,7 @@ async function runSeeds() {
     await seedTemplates();
     await seedThreatActors();
     await seedTechniqueMetadata();
+    await seedStarterPacks();
 
     console.log('\n✅ All seeds completed successfully!\n');
   } catch (error) {
@@ -301,4 +339,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runSeeds, seedTemplates, seedThreatActors, seedTechniqueMetadata };
+module.exports = { runSeeds, seedTemplates, seedThreatActors, seedTechniqueMetadata, seedStarterPacks };
