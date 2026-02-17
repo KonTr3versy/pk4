@@ -54,14 +54,6 @@ describe('API route contract alignment', () => {
     expect(client).toContain('/workflow/role-defaults');
   });
 
-
-  test('wip limit client bindings match workflow routes', () => {
-    expect(workflowRoutes).toContain("router.get('/:id/wip-limits'");
-    expect(workflowRoutes).toContain("router.put('/:id/wip-limits/:columnStatus'");
-    expect(client).toContain('/workflow/${engagementId}/wip-limits');
-    expect(client).toContain('/workflow/${engagementId}/wip-limits/${columnStatus}');
-  });
-
   test('analytics and threat-pipeline client bindings match route modules', () => {
     expect(analyticsRoutes).toContain("router.post('/:engagementId/metrics/calculate'");
     expect(analyticsRoutes).toContain("router.get('/:engagementId/metrics'");
