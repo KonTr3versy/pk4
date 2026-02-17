@@ -225,6 +225,28 @@ export async function getCurrentUser() {
   return apiRequest('/auth/me');
 }
 
+export async function updateOrgName(name) {
+  return apiRequest('/orgs/current', {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function checkBackendHealth() {
+  return apiRequest('/healthz');
+}
+
+export async function startAttackSync() {
+  return apiRequest('/admin/attack/sync', {
+    method: 'POST',
+    body: JSON.stringify({ domain: 'enterprise' }),
+  });
+}
+
+export async function getAttackSyncStatus() {
+  return apiRequest('/admin/attack/sync/status');
+}
+
 export async function getAuthStatusWithSession() {
   const status = await checkAuthStatus();
   let authenticated = false;

@@ -1,7 +1,22 @@
 const express = require('express');
 const db = require('../db/connection');
+const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
+
+router.patch('/current', requireAdmin, async (req, res) => {
+  const orgName = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  if (!orgName) {
+    return res.status(400).json({ error: 'Organization name is required' });
+  }
+
+  const result = await db.query(
+    'UPDATE orgs SET name = $1 WHERE id = $2 RETURNING id, name',
+    [orgName, req.user.org_id]
+  );
+
+  return res.json(result.rows[0]);
+});
 
 router.post('/settings', async (req, res) => {
   const { orgName, attackSyncEnabled = true, loadStarterPacks = true } = req.body;
