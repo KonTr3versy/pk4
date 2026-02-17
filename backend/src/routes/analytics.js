@@ -311,7 +311,7 @@ router.get('/organizations/:orgId/attack-coverage', async (req, res) => {
       `SELECT technique_id, coverage_status, historical_detection_rate, times_tested,
               times_blocked, times_alerted, times_logged, times_missed, updated_at
        FROM attack_coverage
-       WHERE COALESCE(org_id, organization_id) = $1
+       WHERE organization_id = $1
        ORDER BY technique_id ASC`,
       [orgId]
     );
@@ -336,7 +336,7 @@ router.post('/organizations/:orgId/attack-coverage/export-navigator', async (req
     const coverage = await db.query(
       `SELECT technique_id, coverage_status, historical_detection_rate
        FROM attack_coverage
-       WHERE COALESCE(org_id, organization_id) = $1`,
+       WHERE organization_id = $1`,
       [orgId]
     );
 
@@ -373,7 +373,7 @@ router.get('/organizations/:orgId/kpis', async (req, res) => {
     const result = await db.query(
       `SELECT *
        FROM organization_kpis
-       WHERE COALESCE(org_id, organization_id) = $1
+       WHERE organization_id = $1
        ORDER BY reporting_period_end DESC
        LIMIT 50`,
       [orgId]
@@ -422,14 +422,13 @@ router.post('/organizations/:orgId/kpis/calculate', async (req, res) => {
 
     const upsert = await db.query(
       `INSERT INTO organization_kpis (
-          organization_id, org_id, reporting_period_start, reporting_period_end,
+          organization_id, reporting_period_start, reporting_period_end,
           procedures_tested, exercises_conducted, detections_verified,
           detection_coverage_percent, mean_time_to_detect_seconds, mean_time_to_contain_seconds,
           calculated_at
-       ) VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
        ON CONFLICT (organization_id, reporting_period_start, reporting_period_end)
        DO UPDATE SET
-         org_id = EXCLUDED.org_id,
          procedures_tested = EXCLUDED.procedures_tested,
          exercises_conducted = EXCLUDED.exercises_conducted,
          detections_verified = EXCLUDED.detections_verified,

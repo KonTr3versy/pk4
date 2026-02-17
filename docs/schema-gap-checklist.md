@@ -22,7 +22,7 @@ Legend:
 | Target item | Status | Notes |
 |---|---|---|
 | `engagement_goals` with kickoff goal enums | ✅ | Implemented + aligned by follow-up migration. |
-| `engagement_roles` with kickoff role enums + `responsibilities` | ✅ | `responsibilities` exists and role taxonomy is normalized to kickoff roles in follow-on migration. |
+| `engagement_roles` with kickoff role enums + `responsibilities` | 🟨 | `responsibilities` exists; role taxonomy changed over time and differs from original in older migration history. |
 | `role_responsibility_defaults` + seed defaults | ✅ | Implemented with kickoff roles/defaults. |
 | `engagement_planning_phases` | ✅ | Implemented with phase/status constraints + ordering checks. |
 | `planning_phase_attendees` | ✅ | Implemented. |
@@ -84,8 +84,3 @@ Legend:
    - `preparation_items` categories/statuses
    - `engagements.methodology` adding `hybrid` if required
 
-
-## 7) Cross-cutting consistency notes
-
-- ✅ Added org-id alignment migration so analytics/reporting tables now carry `org_id` alongside legacy `organization_id` where needed.
-- ✅ Backend analytics and threat-pipeline routes now scope by `COALESCE(org_id, organization_id)` to avoid split-brain authorization/query mismatches during transition.
