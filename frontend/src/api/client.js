@@ -708,19 +708,6 @@ export async function updatePlanningPhaseOutput(engagementId, phaseId, outputId,
     body: JSON.stringify(data),
   });
 }
-
-// WIP Limits
-export async function getWipLimits(engagementId) {
-  return apiRequest(`/workflow/${engagementId}/wip-limits`);
-}
-
-export async function updateWipLimit(engagementId, columnStatus, maxItems) {
-  return apiRequest(`/workflow/${engagementId}/wip-limits/${columnStatus}`, {
-    method: 'PUT',
-    body: JSON.stringify({ max_items: maxItems }),
-  });
-}
-
 // Expectations (Table Top Matrix)
 export async function getTechniqueExpectations(engagementId, techId) {
   return apiRequest(`/workflow/${engagementId}/techniques/${techId}/expectations`);

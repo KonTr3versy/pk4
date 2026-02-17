@@ -28,7 +28,7 @@ router.get('/', async (req, res) => {
   try {
     const { status, source, search } = req.query;
     const values = [req.user.org_id];
-    const where = ["COALESCE(org_id, organization_id) = $1"];
+    const where = ['organization_id = $1'];
 
     if (status) {
       values.push(status);
@@ -88,10 +88,10 @@ router.post('/', async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO threat_pipeline
-       (organization_id, org_id, source, source_reference, discovered_by, title, description,
+       (organization_id, source, source_reference, discovered_by, title, description,
         technique_ids, affected_technologies, status, telemetry_requirements,
         validation_schedule, next_validation_due)
-       VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        RETURNING *`,
       [
         req.user.org_id,
@@ -192,7 +192,7 @@ router.put('/:id', async (req, res) => {
     const result = await db.query(
       `UPDATE threat_pipeline
        SET ${updates.join(', ')}
-       WHERE id = $${idx} AND COALESCE(org_id, organization_id) = $${idx + 1}
+       WHERE id = $${idx} AND organization_id = $${idx + 1}
        RETURNING *`,
       values
     );
@@ -216,7 +216,7 @@ router.delete('/:id', async (req, res) => {
     }
 
     const result = await db.query(
-      'DELETE FROM threat_pipeline WHERE id = $1 AND COALESCE(org_id, organization_id) = $2 RETURNING id',
+      'DELETE FROM threat_pipeline WHERE id = $1 AND organization_id = $2 RETURNING id',
       [id, req.user.org_id]
     );
 
