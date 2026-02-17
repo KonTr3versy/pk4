@@ -20,6 +20,8 @@ const analyticsRoutes = require('./routes/analytics');
 const threatPipelineRoutes = require('./routes/threat-pipeline');
 const adminAttackRoutes = require('./routes/admin-attack');
 const adminRoutes = require('./routes/admin');
+const packsRoutes = require('./routes/packs');
+const orgRoutes = require('./routes/orgs');
 
 const { requireAuth } = require('./middleware/auth');
 const db = require('./db/connection');
@@ -173,6 +175,8 @@ app.use('/api/analytics', requireAuth, analyticsRoutes);
 app.use('/api/threat-pipeline', requireAuth, threatPipelineRoutes);
 app.use('/api/admin/attack', requireAuth, adminAttackRoutes);
 app.use('/api/admin', requireAuth, adminRoutes);
+app.use('/api/packs', requireAuth, packsRoutes);
+app.use('/api/orgs', requireAuth, orgRoutes);
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../../frontend/dist')));

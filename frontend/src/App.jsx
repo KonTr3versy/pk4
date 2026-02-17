@@ -15,6 +15,7 @@ import {
 
 import * as api from './api/client';
 import { EngagementWizard, ExecutionBoard, PreExecutionChecklist, PlanningWorkflow } from './components/planning';
+import { resolveInitialRoute } from './utils/routeGuard';
 
 // =============================================================================
 // CONSTANTS
@@ -53,8 +54,10 @@ const KANBAN_COLUMNS = [
 // =============================================================================
 
 export default function App() {
+  const [path, setPath] = useState(window.location.pathname || '/');
   // Auth state
   const [authState, setAuthState] = useState('loading');
+  const [setupRequired, setSetupRequired] = useState(false);
   const [user, setUser] = useState(null);
   
   // View state
@@ -75,18 +78,25 @@ export default function App() {
   const [showChecklist, setShowChecklist] = useState(false);
   const [showCreateTemplateModal, setShowCreateTemplateModal] = useState(false);
   const [templateSourceEngagement, setTemplateSourceEngagement] = useState(null);
+  const [packs, setPacks] = useState([]);
 
   useEffect(() => {
     checkAuth();
   }, []);
 
+  function navigateTo(nextPath) {
+    window.history.pushState({}, '', nextPath);
+    setPath(nextPath);
+  }
+
   async function checkAuth() {
     try {
       const status = await api.checkAuthStatus();
-      
-      if (status.setupRequired) {
-        setAuthState('setup');
-        return;
+      setSetupRequired(Boolean(status.setupRequired));
+      const targetPath = resolveInitialRoute({ setupRequired: status.setupRequired, authenticated: api.isLoggedIn() });
+      if (status.setupRequired || !api.isLoggedIn()) {
+        setAuthState(status.setupRequired ? 'setup' : 'login');
+        if (path !== targetPath) navigateTo(targetPath);
       }
       
       if (api.isLoggedIn()) {
@@ -94,7 +104,9 @@ export default function App() {
           const currentUser = await api.getCurrentUser();
           setUser(currentUser);
           setAuthState('authenticated');
+          if (path === '/onboarding' && !status.setupRequired) navigateTo('/');
           loadData();
+          loadPacks();
         } catch (err) {
           api.logout();
           setAuthState('login');
@@ -106,6 +118,14 @@ export default function App() {
       console.error('Auth check failed:', err);
       setError('Failed to connect to server');
       setAuthState('login');
+    }
+  }
+
+  async function loadPacks() {
+    try {
+      setPacks(await api.listPacks());
+    } catch (error) {
+      console.error('Failed to load packs', error);
     }
   }
 
@@ -170,6 +190,13 @@ export default function App() {
     } catch (err) {
       setError('Failed to create engagement');
     }
+  }
+
+  async function handleApplyPack(packId, engagementId = selectedEngagement?.id) {
+    if (!engagementId) return;
+    const result = await api.applyPack(engagementId, packId);
+    await loadEngagement(engagementId);
+    alert(`Added ${result.added} techniques (${result.skipped} already present)`);
   }
 
   function handleWizardComplete(engagement) {
@@ -327,15 +354,28 @@ export default function App() {
     );
   }
 
-  // Setup
-  if (authState === 'setup') {
-    return <SetupScreen onSetup={handleSetup} />;
+  if (path === '/onboarding') {
+    return (
+      <OnboardingWizard
+        setupRequired={setupRequired}
+        authState={authState}
+        onSetup={handleSetup}
+        onLogin={handleLogin}
+        onComplete={(engagement) => {
+          setSelectedEngagement(engagement);
+          navigateTo('/');
+          setCurrentView('engagement-detail');
+          loadData();
+        }}
+        packs={packs}
+        onLoadPacks={loadPacks}
+        onApplyPack={handleApplyPack}
+      />
+    );
   }
 
-  // Login
-  if (authState === 'login') {
-    return <LoginScreen onLogin={handleLogin} />;
-  }
+  if (authState === 'setup') return <SetupScreen onSetup={handleSetup} />;
+  if (authState === 'login') return <LoginScreen onLogin={handleLogin} />;
 
   // Main app
   return (
@@ -363,6 +403,9 @@ export default function App() {
           <div className="flex items-center gap-1">
             <NavButton active={currentView === 'dashboard'} onClick={() => setCurrentView('dashboard')} icon={BarChart3} label="Dashboard" />
             <NavButton active={currentView === 'engagements' || currentView === 'engagement-detail'} onClick={() => setCurrentView('engagements')} icon={Target} label="Engagements" />
+            <NavButton active={currentView === 'packs'} onClick={() => { setCurrentView('packs'); loadPacks(); }} icon={Clipboard} label="Packs" />
+            {user?.role === 'admin' && <NavButton active={false} onClick={() => navigateTo('/onboarding')} icon={Settings} label="Onboarding" />}
+            {user?.role === 'admin' && <NavButton active={currentView === 'license'} onClick={() => setCurrentView('license')} icon={Lock} label="License" />}
             {selectedEngagement && (
               <>
                 <NavButton active={currentView === 'planning'} onClick={() => setCurrentView('planning')} icon={Settings} label="Planning" />
@@ -427,8 +470,14 @@ export default function App() {
                   setTemplateSourceEngagement(selectedEngagement);
                   setShowCreateTemplateModal(true);
                 }}
+                onApplyPack={handleApplyPack}
+                packs={packs}
               />
             )}
+            {currentView === 'packs' && (
+              <PacksView packs={packs} onRefresh={loadPacks} onApplyPack={(packId) => handleApplyPack(packId)} selectedEngagement={selectedEngagement} />
+            )}
+            {currentView === 'license' && user?.role === 'admin' && <LicenseView />}
             {currentView === 'kanban' && selectedEngagement && (
               <KanbanView
                 engagement={selectedEngagement}
@@ -764,7 +813,115 @@ function EngagementsListView({ engagements, onSelect, onDelete, onNew, onQuickNe
   );
 }
 
-function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onDeleteTechnique, onExportJSON, onExportCSV, onExportNavigator, onBack, onShowChecklist, onDuplicate, onCreateTemplate }) {
+function OnboardingWizard({ setupRequired, authState, onSetup, onLogin, onComplete, packs = [], onLoadPacks, onApplyPack }) {
+  const [step, setStep] = useState(1);
+  const [form, setForm] = useState({ username: '', displayName: '', password: '', orgName: '', attackSyncEnabled: true, loadStarterPacks: true, engagementName: 'First Engagement', objective: '', environment: 'prod-like' });
+  const [engagement, setEngagement] = useState(null);
+
+  async function next() {
+    if (step === 1 && setupRequired) {
+      await onSetup(form.username, form.password, form.displayName || form.username);
+    }
+    if (step === 2) {
+      await api.saveOrgSettings(form);
+      if (form.attackSyncEnabled) await api.syncAttackData();
+      if (form.loadStarterPacks) await onLoadPacks();
+    }
+    if (step === 3) {
+      const created = await api.createEngagement({ name: form.engagementName, description: `${form.objective} (${form.environment})`, methodology: 'atomic' });
+      setEngagement(created);
+    }
+    if (step === 4 && packs.length && engagement) {
+      // optional step
+    }
+    setStep(step + 1);
+  }
+
+  if (authState === 'login' && !setupRequired) {
+    return <LoginScreen onLogin={onLogin} />;
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-gray-100 p-6">
+      <div className="max-w-2xl mx-auto bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
+        <h1 className="text-xl font-bold">Welcome to PurpleKit</h1>
+        {step === 1 && setupRequired && <SetupScreen onSetup={onSetup} />}
+        {step === 1 && !setupRequired && <div className="text-gray-400">Setup already complete.</div>}
+        {step === 2 && <div className="space-y-2"><input placeholder="Organization name" className="w-full px-3 py-2 bg-gray-800 rounded" value={form.orgName} onChange={(e) => setForm({ ...form, orgName: e.target.value })} /><label className="flex gap-2"><input type="checkbox" checked={form.attackSyncEnabled} onChange={(e) => setForm({ ...form, attackSyncEnabled: e.target.checked })} />Enable ATT&CK sync now</label><label className="flex gap-2"><input type="checkbox" checked={form.loadStarterPacks} onChange={(e) => setForm({ ...form, loadStarterPacks: e.target.checked })} />Load starter packs</label></div>}
+        {step === 3 && <div className="space-y-2"><input placeholder="Engagement name" className="w-full px-3 py-2 bg-gray-800 rounded" value={form.engagementName} onChange={(e) => setForm({ ...form, engagementName: e.target.value })} /><input placeholder="Objective" className="w-full px-3 py-2 bg-gray-800 rounded" value={form.objective} onChange={(e) => setForm({ ...form, objective: e.target.value })} /></div>}
+        {step === 4 && engagement && (
+          <div className="space-y-2">
+            <p className="text-sm text-gray-400">Apply your first starter pack</p>
+            {packs.map((pack) => <button key={pack.id} onClick={() => onApplyPack(pack.id, engagement.id)} className="block w-full text-left px-3 py-2 bg-gray-800 rounded hover:bg-gray-700">{pack.name}</button>)}
+          </div>
+        )}
+        {step >= 5 && <button onClick={() => onComplete(engagement)} className="px-4 py-2 bg-purple-600 rounded">Finish</button>}
+        {step < 5 && <button onClick={next} className="px-4 py-2 bg-purple-600 rounded">Continue</button>}
+      </div>
+    </div>
+  );
+}
+
+function PacksView({ packs, selectedEngagement, onApplyPack }) {
+  const [search, setSearch] = useState('');
+  const filtered = packs.filter((pack) => pack.name.toLowerCase().includes(search.toLowerCase()));
+  return (
+    <div className="max-w-4xl mx-auto space-y-3">
+      <h1 className="text-xl font-bold">Pack Templates</h1>
+      <input value={search} onChange={(e) => setSearch(e.target.value)} className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded" placeholder="Search packs" />
+      {filtered.map((pack) => (
+        <div key={pack.id} className="p-3 bg-gray-900 border border-gray-800 rounded-lg flex items-center justify-between">
+          <div><div className="font-medium">{pack.name}</div><div className="text-xs text-gray-400">{pack.domain} • {pack.technique_count} techniques</div></div>
+          {selectedEngagement && <button onClick={() => onApplyPack(pack.id)} className="px-3 py-1.5 bg-purple-600 rounded">Apply Pack</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LicenseView() {
+  const [licenseKey, setLicenseKey] = useState('');
+  const [status, setStatus] = useState(null);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    api.getLicenseStatus().then(setStatus).catch(() => setStatus(null));
+  }, []);
+
+  async function submit(e) {
+    e.preventDefault();
+    try {
+      const updated = await api.setLicenseKey(licenseKey);
+      setStatus(updated);
+      setMessage('License applied');
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  return <div className="max-w-2xl mx-auto bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3"><h1 className="text-xl font-bold">License</h1><div className="text-sm text-gray-300">Plan: {status?.plan || 'none'}</div><form onSubmit={submit} className="space-y-2"><input value={licenseKey} onChange={(e) => setLicenseKey(e.target.value)} className="w-full px-3 py-2 bg-gray-800 rounded" placeholder="Enter license key" /><button className="px-3 py-2 bg-purple-600 rounded">Save License Key</button></form>{message && <div className="text-sm text-gray-300">{message}</div>}</div>;
+}
+
+function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onDeleteTechnique, onExportJSON, onExportCSV, onExportNavigator, onBack, onShowChecklist, onDuplicate, onCreateTemplate, onApplyPack, packs = [] }) {
+  const [bundleBusy, setBundleBusy] = useState(false);
+  const [bundleError, setBundleError] = useState('');
+
+  async function handleBundleDownload() {
+    setBundleBusy(true);
+    setBundleError('');
+    try {
+      await api.downloadReportBundle(engagement.id);
+    } catch (error) {
+      if (error.status === 402 || error.status === 403) {
+        setBundleError('Upgrade required or feature is not enabled. Visit License page.');
+      } else {
+        setBundleError(error.message || 'Failed to generate bundle. Try again.');
+      }
+    } finally {
+      setBundleBusy(false);
+    }
+  }
+
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
@@ -788,9 +945,15 @@ function EngagementDetailView({ engagement, onAddTechnique, onEditTechnique, onD
           <button onClick={onExportJSON} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> JSON</button>
           <button onClick={onExportCSV} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> CSV</button>
           <button onClick={onExportNavigator} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> Navigator</button>
+          <button disabled={bundleBusy} onClick={handleBundleDownload} className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 rounded-lg flex items-center gap-1"><Download className="w-4 h-4" /> {bundleBusy ? 'Preparing...' : 'Download Report Bundle'}</button>
+          <select onChange={(e) => e.target.value && onApplyPack?.(e.target.value)} className="px-2 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm">
+            <option value="">From Pack</option>
+            {packs.map((pack) => <option key={pack.id} value={pack.id}>{pack.name}</option>)}
+          </select>
           <button onClick={onAddTechnique} className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm"><Plus className="w-4 h-4" /> Add Technique</button>
         </div>
       </div>
+      {bundleError && <div className="text-sm text-amber-300 bg-amber-900/30 border border-amber-800 rounded-lg p-2">{bundleError}</div>}
       <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
         {(!engagement.techniques || engagement.techniques.length === 0) ? (
           <div className="p-10 text-center">

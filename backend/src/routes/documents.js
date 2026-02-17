@@ -41,6 +41,11 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const generationRateLimit = new Map();
 const RATE_LIMIT_WINDOW = 60 * 60 * 1000; // 1 hour
 const RATE_LIMIT_MAX = 5; // Max 5 generations per hour per engagement
+const bundleInFlight = new Set();
+const bundleRateLimit = new Map();
+const BUNDLE_WINDOW_MS = parseInt(process.env.BUNDLE_RATE_LIMIT_WINDOW_MS || `${10 * 60 * 1000}`, 10);
+const BUNDLE_RATE_LIMIT_MAX = parseInt(process.env.BUNDLE_RATE_LIMIT_MAX || '3', 10);
+const BUNDLE_MAX_BYTES = parseInt(process.env.BUNDLE_MAX_BYTES || `${25 * 1024 * 1024}`, 10);
 
 // =============================================================================
 // VALIDATION HELPERS
@@ -83,6 +88,21 @@ function checkRateLimit(engagementId) {
   }
 
   validTimestamps.push(now);
+  return true;
+}
+
+function checkBundleRateLimit(engagementId) {
+  const now = Date.now();
+  if (!bundleRateLimit.has(engagementId)) {
+    bundleRateLimit.set(engagementId, []);
+  }
+  const entries = bundleRateLimit.get(engagementId).filter(ts => now - ts < BUNDLE_WINDOW_MS);
+  if (entries.length >= BUNDLE_RATE_LIMIT_MAX) {
+    bundleRateLimit.set(engagementId, entries);
+    return false;
+  }
+  entries.push(now);
+  bundleRateLimit.set(engagementId, entries);
   return true;
 }
 
@@ -142,8 +162,16 @@ router.get('/:id', verifyEngagementAccess, async (req, res) => {
 
 // GET /api/documents/:engagementId/bundle
 router.get('/:engagementId/bundle', requireFeature('report_bundle'), async (req, res) => {
+  let tempDir;
   try {
     const { engagementId } = req.params;
+    if (bundleInFlight.has(engagementId)) {
+      return res.status(429).json({ error: 'Bundle generation is already in progress for this engagement' });
+    }
+    if (!checkBundleRateLimit(engagementId)) {
+      return res.status(429).json({ error: 'Bundle generation rate limit exceeded. Please wait and retry.' });
+    }
+
     const engagementResult = await db.query(
       'SELECT id, name, org_id FROM engagements WHERE id = $1 AND org_id = $2',
       [engagementId, req.user.org_id]
@@ -153,14 +181,23 @@ router.get('/:engagementId/bundle', requireFeature('report_bundle'), async (req,
       return res.status(404).json({ error: 'Engagement not found' });
     }
 
+    bundleInFlight.add(engagementId);
     const engagement = engagementResult.rows[0];
     const { files, filename } = await buildReportBundle({
       engagement,
       includeEngagementJson: req.query.include_engagement_json === 'true',
     });
 
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'purplekit-bundle-'));
+    let bytes = 0;
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'purplekit-bundle-'));
     for (const file of files) {
+      const candidateSize = Buffer.isBuffer(file.data)
+        ? file.data.length
+        : Buffer.byteLength(file.data, file.encoding || 'utf8');
+      bytes += candidateSize;
+      if (bytes > BUNDLE_MAX_BYTES) {
+        throw new Error('Report bundle too large');
+      }
       await fs.writeFile(path.join(tempDir, file.name), file.data, file.encoding ? { encoding: file.encoding } : undefined);
     }
 
@@ -168,6 +205,13 @@ router.get('/:engagementId/bundle', requireFeature('report_bundle'), async (req,
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
     const zip = spawn('zip', ['-q', '-r', '-', '.'], { cwd: tempDir });
+    const timeout = setTimeout(() => {
+      zip.kill('SIGKILL');
+    }, parseInt(process.env.BUNDLE_TIMEOUT_MS || '90000', 10));
+
+    req.on('close', () => {
+      zip.kill('SIGKILL');
+    });
 
     zip.stdout.pipe(res);
     zip.stderr.on('data', (chunk) => {
@@ -175,14 +219,23 @@ router.get('/:engagementId/bundle', requireFeature('report_bundle'), async (req,
     });
 
     zip.on('close', async (code) => {
+      clearTimeout(timeout);
+      bundleInFlight.delete(engagementId);
       await fs.rm(tempDir, { recursive: true, force: true });
       if (code !== 0 && !res.headersSent) {
         res.status(500).json({ error: 'Failed to build report bundle zip' });
       }
     });
   } catch (error) {
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+    bundleInFlight.delete(req.params.engagementId);
     console.error('Error exporting report bundle:', error);
     if (!res.headersSent) {
+      if (error.message === 'Report bundle too large') {
+        return res.status(413).json({ error: 'Report bundle exceeded maximum size limit' });
+      }
       return res.status(500).json({ error: 'Failed to export report bundle' });
     }
   }

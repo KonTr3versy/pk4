@@ -453,6 +453,34 @@ Apply a license key (org admin):
 
 Without a valid license enabling `report_bundle`, the bundle endpoint returns HTTP 402.
 
+### First run onboarding
+
+On fresh installs, PurpleKit now redirects to `/onboarding` automatically when setup is required or the user is unauthenticated.
+
+Onboarding MVP flow:
+
+1. Create first admin (if setup required).
+2. Save organization preferences (org name, ATT&CK sync toggle, starter packs toggle).
+3. Create first engagement.
+4. Optionally apply a starter pack to pre-populate techniques.
+
+Admins can revisit onboarding from the top navigation menu.
+
+### Packs
+
+PurpleKit includes a dedicated pack system with built-in starter packs plus org-specific packs.
+
+Core endpoints:
+
+- `GET /api/packs`
+- `GET /api/packs/:id`
+- `POST /api/packs`
+- `PUT /api/packs/:id`
+- `DELETE /api/packs/:id`
+- `POST /api/engagements/:engagementId/packs/:packId/apply`
+
+Applying a pack deduplicates existing techniques and returns `{ added, skipped }`.
+
 
 ## Smoke test
 

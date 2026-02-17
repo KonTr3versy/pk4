@@ -225,6 +225,26 @@ export async function getCurrentUser() {
   return apiRequest('/auth/me');
 }
 
+export async function getAuthStatusWithSession() {
+  const status = await checkAuthStatus();
+  let authenticated = false;
+  let user = null;
+  if (isLoggedIn()) {
+    try {
+      user = await getCurrentUser();
+      authenticated = true;
+    } catch {
+      clearToken();
+    }
+  }
+
+  return {
+    ...status,
+    authenticated,
+    user,
+  };
+}
+
 export function isLoggedIn() {
   return !!(getToken() || getRefreshToken());
 }
@@ -317,6 +337,10 @@ export async function deleteTechnique(techniqueId) {
 
 export async function getSecurityControls() {
   return apiRequest('/techniques/controls');
+}
+
+export async function syncAttackData() {
+  return apiRequest('/admin/attack/sync', { method: 'POST' });
 }
 
 export async function searchTechniques(filters = {}) {
@@ -826,6 +850,103 @@ export async function generateDocument(engagementId, documentType) {
 
 export async function getEngagementDocuments(engagementId) {
   return apiRequest(`/documents/${engagementId}`);
+}
+
+export async function downloadReportBundle(engagementId) {
+  let token = getToken();
+  const url = `${API_BASE}/documents/${engagementId}/bundle`;
+
+  let response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (response.status === 401) {
+    const refreshed = await refreshAuthToken();
+    if (refreshed) {
+      token = getToken();
+      response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
+  }
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to download report bundle';
+    try {
+      const payload = await response.json();
+      errorMessage = payload.error || errorMessage;
+    } catch {
+      // noop
+    }
+    const error = new Error(errorMessage);
+    error.status = response.status;
+    throw error;
+  }
+
+  const blob = await response.blob();
+  const contentDisposition = response.headers.get('Content-Disposition');
+  const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
+  const filename = filenameMatch ? filenameMatch[1] : 'purplekit_bundle.zip';
+  const downloadUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(downloadUrl);
+}
+
+export async function listPacks() {
+  return apiRequest('/packs');
+}
+
+export async function getPack(packId) {
+  return apiRequest(`/packs/${packId}`);
+}
+
+export async function createPack(data) {
+  return apiRequest('/packs', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updatePack(packId, data) {
+  return apiRequest(`/packs/${packId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePack(packId) {
+  return apiRequest(`/packs/${packId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function applyPack(engagementId, packId) {
+  return apiRequest(`/engagements/${engagementId}/packs/${packId}/apply`, {
+    method: 'POST',
+  });
+}
+
+export async function saveOrgSettings(data) {
+  return apiRequest('/orgs/settings', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getLicenseStatus() {
+  return apiRequest('/admin/license');
+}
+
+export async function setLicenseKey(licenseKey) {
+  return apiRequest('/admin/license', {
+    method: 'POST',
+    body: JSON.stringify({ licenseKey }),
+  });
 }
 
 export async function downloadDocument(engagementId, documentId) {
