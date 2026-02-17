@@ -17,6 +17,7 @@ const approvalRoutes = require('./routes/approvals');
 const documentRoutes = require('./routes/documents');
 const actionItemRoutes = require('./routes/action-items');
 const analyticsRoutes = require('./routes/analytics');
+const threatPipelineRoutes = require('./routes/threat-pipeline');
 const adminAttackRoutes = require('./routes/admin-attack');
 const adminRoutes = require('./routes/admin');
 
@@ -72,10 +73,27 @@ app.use(cors({
 const createAuthRateLimiter = () => {
   const windowMs = parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS || `${15 * 60 * 1000}`, 10);
   const max = parseInt(process.env.AUTH_RATE_LIMIT_MAX || '10', 10);
+  const maxTrackedIps = parseInt(process.env.AUTH_RATE_LIMIT_MAX_TRACKED_IPS || '5000', 10);
   const attempts = new Map();
+
+  function cleanup(now) {
+    for (const [ip, state] of attempts.entries()) {
+      if (now > state.resetAt) {
+        attempts.delete(ip);
+      }
+    }
+
+    while (attempts.size > maxTrackedIps) {
+      const oldestKey = attempts.keys().next().value;
+      if (!oldestKey) break;
+      attempts.delete(oldestKey);
+    }
+  }
 
   return (req, res, next) => {
     const now = Date.now();
+    cleanup(now);
+
     const key = req.ip || req.socket?.remoteAddress || 'unknown';
     const current = attempts.get(key);
 
@@ -152,6 +170,7 @@ app.use('/api/approvals', requireAuth, approvalRoutes);
 app.use('/api/documents', requireAuth, documentRoutes);
 app.use('/api/action-items', requireAuth, actionItemRoutes);
 app.use('/api/analytics', requireAuth, analyticsRoutes);
+app.use('/api/threat-pipeline', requireAuth, threatPipelineRoutes);
 app.use('/api/admin/attack', requireAuth, adminAttackRoutes);
 app.use('/api/admin', requireAuth, adminRoutes);
 
