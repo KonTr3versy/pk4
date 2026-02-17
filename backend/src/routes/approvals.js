@@ -61,8 +61,8 @@ async function verifyEngagementAccess(req, res, next) {
 
   try {
     const result = await db.query(
-      'SELECT id, status, name FROM engagements WHERE id = $1',
-      [id]
+      'SELECT id, status, name FROM engagements WHERE id = $1 AND org_id = $2',
+      [id, req.user.org_id]
     );
 
     if (result.rows.length === 0) {
