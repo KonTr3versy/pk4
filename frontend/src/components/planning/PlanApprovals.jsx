@@ -4,9 +4,9 @@ import * as api from '../../api/client';
 
 const APPROVAL_ROLES = [
   { id: 'coordinator', label: 'Coordinator', required: true },
-  { id: 'sponsor', label: 'Sponsor', required: true },
-  { id: 'red_lead', label: 'Red Team Lead', required: false },
-  { id: 'blue_lead', label: 'Blue Team Lead', required: false }
+  { id: 'stakeholder', label: 'Stakeholder', required: true },
+  { id: 'red_team_lead', label: 'Red Team Lead', required: false },
+  { id: 'blue_team_lead', label: 'Blue Team Lead', required: false }
 ];
 
 export default function PlanApprovals({ engagementId, currentUserId, onUpdate, onStatusChange }) {

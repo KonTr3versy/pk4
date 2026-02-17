@@ -28,8 +28,8 @@ const VALID_GOAL_TYPES = [
 ];
 
 const VALID_ROLES = [
-  'coordinator', 'sponsor', 'cti', 'red_lead', 'red_team',
-  'blue_lead', 'soc', 'hunt', 'dfir', 'spectator'
+  'coordinator', 'red_team_lead', 'red_team_operator', 'blue_team_lead',
+  'blue_team_analyst', 'threat_intel', 'sysadmin', 'stakeholder'
 ];
 
 const VALID_VISIBILITY = ['alert', 'telemetry', 'none', 'unknown'];
