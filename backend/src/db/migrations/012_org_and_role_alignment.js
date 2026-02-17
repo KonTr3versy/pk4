@@ -58,23 +58,6 @@ module.exports = [
   `UPDATE engagement_roles SET role = 'blue_team_analyst' WHERE role IN ('soc', 'hunt', 'dfir');`,
   `UPDATE engagement_roles SET role = 'stakeholder' WHERE role = 'spectator';`,
 
-
-  `DELETE FROM plan_approvals pa
-    USING plan_approvals existing
-    WHERE pa.engagement_id = existing.engagement_id
-      AND pa.role = 'sponsor'
-      AND existing.role = 'stakeholder';`,
-  `DELETE FROM plan_approvals pa
-    USING plan_approvals existing
-    WHERE pa.engagement_id = existing.engagement_id
-      AND pa.role = 'red_lead'
-      AND existing.role = 'red_team_lead';`,
-  `DELETE FROM plan_approvals pa
-    USING plan_approvals existing
-    WHERE pa.engagement_id = existing.engagement_id
-      AND pa.role = 'blue_lead'
-      AND existing.role = 'blue_team_lead';`,
-
   `UPDATE plan_approvals SET role = 'stakeholder' WHERE role = 'sponsor';`,
   `UPDATE plan_approvals SET role = 'red_team_lead' WHERE role = 'red_lead';`,
   `UPDATE plan_approvals SET role = 'blue_team_lead' WHERE role = 'blue_lead';`,
