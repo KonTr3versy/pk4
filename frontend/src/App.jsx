@@ -93,13 +93,19 @@ export default function App() {
     try {
       const status = await api.checkAuthStatus();
       setSetupRequired(Boolean(status.setupRequired));
-      const targetPath = resolveInitialRoute({ setupRequired: status.setupRequired, authenticated: api.isLoggedIn() });
-      if (status.setupRequired || !api.isLoggedIn()) {
-        setAuthState(status.setupRequired ? 'setup' : 'login');
-        if (path !== targetPath) navigateTo(targetPath);
+      const authenticated = Boolean(status.authenticated) && api.isLoggedIn();
+      const targetPath = resolveInitialRoute({ setupRequired: status.setupRequired, authenticated });
+
+      if (path !== targetPath && (path === '/' || path === '/login' || path === '/onboarding')) {
+        navigateTo(targetPath);
       }
-      
-      if (api.isLoggedIn()) {
+
+      if (status.setupRequired) {
+        setAuthState('setup');
+        return;
+      }
+
+      if (authenticated) {
         try {
           const currentUser = await api.getCurrentUser();
           setUser(currentUser);
@@ -133,6 +139,7 @@ export default function App() {
     const data = await api.login(username, password);
     setUser(data.user);
     setAuthState('authenticated');
+    navigateTo('/');
     loadData();
   }
 
@@ -374,8 +381,8 @@ export default function App() {
     );
   }
 
-  if (authState === 'setup') return <SetupScreen onSetup={handleSetup} />;
-  if (authState === 'login') return <LoginScreen onLogin={handleLogin} />;
+  if (authState === 'setup') return <OnboardingWizard setupRequired={setupRequired} authState={authState} onSetup={handleSetup} onLogin={handleLogin} onComplete={(engagement) => { setSelectedEngagement(engagement); navigateTo('/'); setCurrentView('engagement-detail'); loadData(); }} packs={packs} onLoadPacks={loadPacks} onApplyPack={handleApplyPack} />;
+  if (path === '/login' || authState === 'login') return <LoginScreen onLogin={handleLogin} />;
 
   // Main app
   return (
@@ -814,27 +821,91 @@ function EngagementsListView({ engagements, onSelect, onDelete, onNew, onQuickNe
 }
 
 function OnboardingWizard({ setupRequired, authState, onSetup, onLogin, onComplete, packs = [], onLoadPacks, onApplyPack }) {
-  const [step, setStep] = useState(1);
-  const [form, setForm] = useState({ username: '', displayName: '', password: '', orgName: '', attackSyncEnabled: true, loadStarterPacks: true, engagementName: 'First Engagement', objective: '', environment: 'prod-like' });
+  const [step, setStep] = useState(setupRequired ? 1 : 2);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [engagement, setEngagement] = useState(null);
+  const [syncStatus, setSyncStatus] = useState(null);
+  const [backendStatus, setBackendStatus] = useState('checking');
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    orgName: 'Default Org',
+    attackSyncEnabled: true,
+    loadStarterPacks: true,
+    engagementName: 'First Purple Team Engagement',
+    objective: 'Validate detection and response readiness',
+    environment: 'Production',
+  });
+
+  useEffect(() => {
+    api.checkBackendHealth().then(() => setBackendStatus('ok')).catch(() => setBackendStatus('error'));
+  }, []);
+
+  useEffect(() => {
+    let timer;
+    if (step === 3 && form.attackSyncEnabled) {
+      timer = setInterval(async () => {
+        try {
+          const status = await api.getAttackSyncStatus();
+          setSyncStatus(status);
+        } catch (err) {
+          setSyncStatus({ status: 'error', error: err.message });
+        }
+      }, 2500);
+    }
+    return () => clearInterval(timer);
+  }, [step, form.attackSyncEnabled]);
 
   async function next() {
-    if (step === 1 && setupRequired) {
-      await onSetup(form.username, form.password, form.displayName || form.username);
+    setError('');
+    setLoading(true);
+    try {
+      if (step === 2) {
+        await api.updateOrgName(form.orgName);
+        if (form.attackSyncEnabled) {
+          await api.startAttackSync();
+        }
+        setStep(3);
+        return;
+      }
+
+      if (step === 3) {
+        const created = await api.createEngagement({
+          name: form.engagementName,
+          objective: form.objective,
+          environment: form.environment,
+        });
+        setEngagement(created);
+        if (form.loadStarterPacks) {
+          onLoadPacks();
+        }
+        setStep(4);
+        return;
+      }
+
+      if (step === 4) {
+        onComplete(engagement);
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to continue onboarding');
+    } finally {
+      setLoading(false);
     }
-    if (step === 2) {
-      await api.saveOrgSettings(form);
-      if (form.attackSyncEnabled) await api.syncAttackData();
-      if (form.loadStarterPacks) await onLoadPacks();
+  }
+
+  async function completeSetup(payload) {
+    setError('');
+    setLoading(true);
+    try {
+      await onSetup(payload.email || payload.username, payload.password, payload.name || payload.displayName);
+      setStep(2);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
-    if (step === 3) {
-      const created = await api.createEngagement({ name: form.engagementName, description: `${form.objective} (${form.environment})`, methodology: 'atomic' });
-      setEngagement(created);
-    }
-    if (step === 4 && packs.length && engagement) {
-      // optional step
-    }
-    setStep(step + 1);
   }
 
   if (authState === 'login' && !setupRequired) {
@@ -843,20 +914,48 @@ function OnboardingWizard({ setupRequired, authState, onSetup, onLogin, onComple
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6">
-      <div className="max-w-2xl mx-auto bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
-        <h1 className="text-xl font-bold">Welcome to PurpleKit</h1>
-        {step === 1 && setupRequired && <SetupScreen onSetup={onSetup} />}
-        {step === 1 && !setupRequired && <div className="text-gray-400">Setup already complete.</div>}
-        {step === 2 && <div className="space-y-2"><input placeholder="Organization name" className="w-full px-3 py-2 bg-gray-800 rounded" value={form.orgName} onChange={(e) => setForm({ ...form, orgName: e.target.value })} /><label className="flex gap-2"><input type="checkbox" checked={form.attackSyncEnabled} onChange={(e) => setForm({ ...form, attackSyncEnabled: e.target.checked })} />Enable ATT&CK sync now</label><label className="flex gap-2"><input type="checkbox" checked={form.loadStarterPacks} onChange={(e) => setForm({ ...form, loadStarterPacks: e.target.checked })} />Load starter packs</label></div>}
-        {step === 3 && <div className="space-y-2"><input placeholder="Engagement name" className="w-full px-3 py-2 bg-gray-800 rounded" value={form.engagementName} onChange={(e) => setForm({ ...form, engagementName: e.target.value })} /><input placeholder="Objective" className="w-full px-3 py-2 bg-gray-800 rounded" value={form.objective} onChange={(e) => setForm({ ...form, objective: e.target.value })} /></div>}
-        {step === 4 && engagement && (
-          <div className="space-y-2">
-            <p className="text-sm text-gray-400">Apply your first starter pack</p>
-            {packs.map((pack) => <button key={pack.id} onClick={() => onApplyPack(pack.id, engagement.id)} className="block w-full text-left px-3 py-2 bg-gray-800 rounded hover:bg-gray-700">{pack.name}</button>)}
+      <div className="max-w-3xl mx-auto bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
+        <div className="text-sm text-gray-400">Step {step} of {setupRequired ? 4 : 3}</div>
+        <h1 className="text-2xl font-bold">Welcome to PurpleKit</h1>
+        {error && <div className="p-3 bg-red-900/40 border border-red-800 rounded">{error}</div>}
+
+        {step === 1 && setupRequired && (
+          <div className="space-y-3">
+            <p className="text-sm text-gray-300">Create your initial admin account.</p>
+            <SetupScreen
+              onSetup={(username, password, displayName) => completeSetup({ email: username, password, name: displayName })}
+            />
           </div>
         )}
-        {step >= 5 && <button onClick={() => onComplete(engagement)} className="px-4 py-2 bg-purple-600 rounded">Finish</button>}
-        {step < 5 && <button onClick={next} className="px-4 py-2 bg-purple-600 rounded">Continue</button>}
+
+        {step === 2 && (
+          <div className="space-y-3">
+            <label className="block text-sm">Organization name</label>
+            <input className="w-full px-3 py-2 bg-gray-800 rounded" value={form.orgName} onChange={(e) => setForm({ ...form, orgName: e.target.value })} />
+            <div className="text-sm text-gray-300">Backend connectivity: {backendStatus === 'ok' ? 'Connected' : backendStatus === 'error' ? 'Unreachable (check VITE_API_BASE_URL)' : 'Checking...'}</div>
+            <label className="flex gap-2"><input type="checkbox" checked={form.attackSyncEnabled} onChange={(e) => setForm({ ...form, attackSyncEnabled: e.target.checked })} />Run ATT&CK sync now</label>
+            <label className="flex gap-2"><input type="checkbox" checked={form.loadStarterPacks} onChange={(e) => setForm({ ...form, loadStarterPacks: e.target.checked })} />Load starter packs</label>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="space-y-3">
+            {form.attackSyncEnabled && <div className="text-sm text-gray-300">ATT&CK sync status: {syncStatus?.status || 'running'}</div>}
+            <input placeholder="Engagement name" className="w-full px-3 py-2 bg-gray-800 rounded" value={form.engagementName} onChange={(e) => setForm({ ...form, engagementName: e.target.value })} />
+            <input placeholder="Objective" className="w-full px-3 py-2 bg-gray-800 rounded" value={form.objective} onChange={(e) => setForm({ ...form, objective: e.target.value })} />
+            <input placeholder="Environment" className="w-full px-3 py-2 bg-gray-800 rounded" value={form.environment} onChange={(e) => setForm({ ...form, environment: e.target.value })} />
+          </div>
+        )}
+
+        {step === 4 && engagement && (
+          <div className="space-y-2">
+            <p className="text-sm text-gray-400">Apply a starter pack (optional)</p>
+            {packs.slice(0, 12).map((pack) => <button key={pack.id} onClick={() => onApplyPack(pack.id, engagement.id)} className="block w-full text-left px-3 py-2 bg-gray-800 rounded hover:bg-gray-700">{pack.name}</button>)}
+            <button onClick={() => onComplete(engagement)} className="px-4 py-2 bg-gray-700 rounded">Skip and finish</button>
+          </div>
+        )}
+
+        {step >= 2 && step < 4 && <button disabled={loading} onClick={next} className="px-4 py-2 bg-purple-600 rounded disabled:opacity-50">{loading ? 'Working...' : 'Continue'}</button>}
       </div>
     </div>
   );

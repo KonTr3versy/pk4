@@ -12,6 +12,7 @@
 
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const router = express.Router();
 const db = require('../db/connection');
 const {
@@ -20,6 +21,7 @@ const {
   generateToken,
   generateRefreshToken,
   verifyRefreshToken,
+  JWT_SECRET,
 } = require('../middleware/auth');
 
 function sanitizeInput(value) {
@@ -39,14 +41,15 @@ function sanitizeInput(value) {
 // Creates the initial admin user. Only works if no users exist.
 router.post('/setup', async (req, res) => {
   try {
-    const username = sanitizeInput(req.body.username);
+    const username = sanitizeInput(req.body.username || req.body.email);
     const password = req.body.password;
-    const displayName = sanitizeInput(req.body.displayName);
+    const displayName = sanitizeInput(req.body.displayName || req.body.name);
+    const orgName = sanitizeInput(req.body.orgName);
     
     // Check if any users exist
     const existingUsers = await db.query('SELECT COUNT(*) FROM users');
     if (parseInt(existingUsers.rows[0].count) > 0) {
-      return res.status(400).json({ error: 'Setup already completed. Users exist.' });
+      return res.status(409).json({ error: 'Setup already completed. Admin user already exists.' });
     }
     
     // Validate input
@@ -63,9 +66,10 @@ router.post('/setup', async (req, res) => {
     }
     
     const orgResult = await db.query(
-      `INSERT INTO orgs (name) VALUES ('Default Org')
+      `INSERT INTO orgs (name) VALUES ($1)
        ON CONFLICT DO NOTHING
-       RETURNING id`
+       RETURNING id`,
+      [orgName || 'Default Org']
     );
     const fallbackOrg = await db.query('SELECT id FROM orgs ORDER BY created_at ASC LIMIT 1');
     const defaultOrgId = orgResult.rows[0]?.id || fallbackOrg.rows[0]?.id;
@@ -96,6 +100,10 @@ router.post('/setup', async (req, res) => {
       },
       token,
       refreshToken,
+      org: {
+        id: defaultOrgId,
+        name: orgName || 'Default Org',
+      },
     });
   } catch (error) {
     console.error('Setup error:', error);
@@ -111,9 +119,38 @@ router.get('/status', async (req, res) => {
   try {
     const result = await db.query('SELECT COUNT(*) FROM users');
     const userCount = parseInt(result.rows[0].count);
+    const setupRequired = userCount === 0;
+    const authHeader = req.headers.authorization;
+    let authenticated = false;
+    let user = null;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        user = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
+        authenticated = true;
+      } catch {
+        authenticated = false;
+        user = null;
+      }
+    }
+
+    let org = null;
+    if (user?.org_id) {
+      const orgResult = await db.query('SELECT id, name FROM orgs WHERE id = $1', [user.org_id]);
+      org = orgResult.rows[0] || null;
+    }
     
     res.json({
-      setupRequired: userCount === 0,
+      setupRequired,
+      authenticated,
+      user: authenticated
+        ? {
+            id: user.id,
+            role: user.role,
+            org_id: user.org_id,
+          }
+        : null,
+      org,
       userCount,
     });
   } catch (error) {

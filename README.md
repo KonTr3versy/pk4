@@ -455,16 +455,21 @@ Without a valid license enabling `report_bundle`, the bundle endpoint returns HT
 
 ### First run onboarding
 
-On fresh installs, PurpleKit now redirects to `/onboarding` automatically when setup is required or the user is unauthenticated.
+On fresh installs, PurpleKit now redirects to `/onboarding` automatically when `GET /api/auth/status` reports `setupRequired: true`. If setup is complete and no session is present, users are sent to `/login`.
 
 Onboarding MVP flow:
 
 1. Create first admin (if setup required).
 2. Save organization preferences (org name, ATT&CK sync toggle, starter packs toggle).
-3. Create first engagement.
-4. Optionally apply a starter pack to pre-populate techniques.
+3. Optionally start ATT&CK sync and monitor status (non-blocking, skip allowed).
+4. Create first engagement.
+5. Optionally apply a starter pack to pre-populate techniques.
 
 Admins can revisit onboarding from the top navigation menu.
+
+Troubleshooting:
+- If backend connectivity fails during onboarding, verify `VITE_API_BASE_URL` points to the running API service.
+- If ATT&CK sync errors, skip the step and continue creating the first engagement; sync can be retried later from onboarding.
 
 ### Packs
 
