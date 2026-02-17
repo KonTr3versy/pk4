@@ -67,7 +67,7 @@ describe('Critical API behavior', () => {
 
     mockDb.state.engagementRoles.push(
       { engagement_id: engagementId, user_id: userId, role: 'coordinator' },
-      { engagement_id: engagementId, user_id: userId, role: 'sponsor' }
+      { engagement_id: engagementId, user_id: userId, role: 'stakeholder' }
     );
   });
 
@@ -205,7 +205,7 @@ describe('Critical API behavior', () => {
 
     mockDb.state.approvals.push(
       { engagement_id: engagementId, role: 'coordinator', approved_at: new Date().toISOString() },
-      { engagement_id: engagementId, role: 'sponsor', approved_at: new Date().toISOString() }
+      { engagement_id: engagementId, role: 'stakeholder', approved_at: new Date().toISOString() }
     );
 
     const okTransition = await request(app)
