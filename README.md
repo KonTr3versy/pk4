@@ -238,6 +238,7 @@ docker-compose exec db psql -U purplekit  # Database shell
 | `CORS_ALLOWED_ORIGINS` | Comma-separated frontend origin allowlist (required in production) | `https://purplekit.io,https://www.purplekit.io` |
 | `AUTH_RATE_LIMIT_WINDOW_MS` | Auth rate-limit window in milliseconds | `900000` |
 | `AUTH_RATE_LIMIT_MAX` | Max auth attempts per IP in the rate-limit window | `10` |
+| `AUTH_RATE_LIMIT_MAX_TRACKED_IPS` | Max unique IP entries kept in memory for auth limiter (helps bound memory) | `5000` |
 
 ## Authentication
 
@@ -257,7 +258,8 @@ PurpleKit uses JWT-based authentication:
 - **Production**
   - CORS only allows origins listed in `CORS_ALLOWED_ORIGINS`.
   - Helmet CSP is enabled with a strict `self` baseline and explicit allowances for bundled frontend assets (`script-src 'self'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: blob:`).
-  - `/api/auth/*` is protected by explicit rate limiting (`AUTH_RATE_LIMIT_WINDOW_MS`, `AUTH_RATE_LIMIT_MAX`).
+  - `/api/auth/*` is protected by explicit rate limiting (`AUTH_RATE_LIMIT_WINDOW_MS`, `AUTH_RATE_LIMIT_MAX`, `AUTH_RATE_LIMIT_MAX_TRACKED_IPS`).
+  - The API fails fast at startup if `JWT_SECRET` is missing/default or `JWT_REFRESH_SECRET` is unset.
 
 ### User Roles
 - **admin** - Can create/delete users, full access
@@ -265,35 +267,77 @@ PurpleKit uses JWT-based authentication:
 
 ## Deployment
 
-### Manual Deployment
+### Production deployment checklist (recommended)
 
-See [docs/AWS_DEPLOYMENT.md](docs/AWS_DEPLOYMENT.md) for complete AWS setup instructions.
+1. **Provision infrastructure**
+   - PostgreSQL (RDS or managed Postgres).
+   - VM/host (EC2, VPS, etc.) with Docker + Docker Compose.
+   - DNS record pointing to host IP (optional but recommended).
+
+2. **Clone and configure**
+   ```bash
+   git clone <your-repo-url> purplekit-app
+   cd purplekit-app
+   cp .env.example .env
+   ```
+
+3. **Set required production environment variables in `.env`**
+   At minimum, set:
+   - `NODE_ENV=production`
+   - `DATABASE_URL=<postgres-connection-string>`
+   - `JWT_SECRET=<strong-random-secret>`
+   - `JWT_REFRESH_SECRET=<different-strong-random-secret>`
+   - `CORS_ALLOWED_ORIGINS=https://your-frontend-domain`
+
+   Recommended hardening knobs:
+   - `AUTH_RATE_LIMIT_WINDOW_MS=900000`
+   - `AUTH_RATE_LIMIT_MAX=10`
+   - `AUTH_RATE_LIMIT_MAX_TRACKED_IPS=5000`
+
+   > Note: In production, backend startup now **fails intentionally** if JWT secrets are missing/unsafe.
+
+4. **Build the production image**
+   ```bash
+   docker-compose -f docker-compose.prod.yml build
+   ```
+
+5. **Run database migrations before first start (and on every deploy)**
+   ```bash
+   docker-compose -f docker-compose.prod.yml run --rm purplekit node src/db/migrate.js
+   ```
+
+6. **Start the app**
+   ```bash
+   docker-compose -f docker-compose.prod.yml up -d
+   ```
+
+7. **Verify health**
+   ```bash
+   curl -f http://localhost/api/health
+   ```
+
+### Updating an existing deployment
 
 ```bash
-# SSH to your EC2 instance
-ssh -i your-key.pem ec2-user@your-ec2-ip
-
-# Pull latest changes
 cd purplekit-app
 git pull
-
-# Rebuild and restart
-docker-compose -f docker-compose.prod.yml down
 docker-compose -f docker-compose.prod.yml build
+docker-compose -f docker-compose.prod.yml run --rm purplekit node src/db/migrate.js
 docker-compose -f docker-compose.prod.yml up -d
 ```
 
-### Automated Deployment (GitHub Actions)
+### Automated deployment (GitHub Actions)
 
-This repo includes a GitHub Actions workflow that automatically deploys when you push to `main`.
+This repo includes `.github/workflows/deploy.yml` to deploy on pushes to `main` (or manually via workflow dispatch).
 
-**Setup required:**
-1. Add these secrets to your GitHub repo (Settings → Secrets → Actions):
-   - `EC2_HOST` - Your EC2 public IP or domain
-   - `EC2_USER` - SSH user (usually `ec2-user`)
-   - `EC2_SSH_KEY` - Contents of your `.pem` private key file
+Required repository secrets:
+- `EC2_HOST`
+- `EC2_USER`
+- `EC2_SSH_KEY`
 
-2. Push to `main` branch - deployment runs automatically
+For production-grade reliability, also ensure your target host has a complete `.env` with the production variables above (`DATABASE_URL`, JWT secrets, CORS allowlist, etc.).
+
+See [docs/AWS_DEPLOYMENT.md](docs/AWS_DEPLOYMENT.md) for full AWS setup details.
 
 ## Contributing
 

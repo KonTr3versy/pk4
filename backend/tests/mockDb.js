@@ -79,6 +79,10 @@ function createMockDb() {
       return { rows: [{ id: deleted.id }] };
     }
 
+    if (sql.includes('select id, status, name from engagements where id = $1 and org_id = $2')) {
+      return { rows: state.engagements.filter((e) => e.id === params[0] && e.org_id === params[1]) };
+    }
+
     if (sql.includes('select id, status, name from engagements where id = $1') || sql.includes('select id, status from engagements where id = $1') || sql.includes('select * from engagements where id = $1')) {
       return { rows: state.engagements.filter((e) => e.id === params[0]) };
     }
@@ -89,13 +93,13 @@ function createMockDb() {
     }
 
     if (sql.includes('select role from engagement_roles')) {
-      const rows = state.engagementRoles.filter((r) => r.engagement_id === params[0] && r.user_id === params[1] && ['coordinator', 'sponsor'].includes(r.role));
+      const rows = state.engagementRoles.filter((r) => r.engagement_id === params[0] && r.user_id === params[1] && ['coordinator', 'stakeholder', 'sponsor'].includes(r.role));
       return { rows };
     }
 
     if (sql.includes('select distinct role from engagement_roles')) {
       const roles = state.engagementRoles
-        .filter((r) => r.engagement_id === params[0] && ['coordinator', 'sponsor', 'red_lead', 'blue_lead'].includes(r.role))
+        .filter((r) => r.engagement_id === params[0] && ['coordinator', 'stakeholder', 'sponsor', 'red_team_lead', 'blue_team_lead', 'red_lead', 'blue_lead'].includes(r.role))
         .map((r) => r.role);
       return { rows: [...new Set(roles)].map((role) => ({ role })) };
     }

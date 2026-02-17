@@ -12,6 +12,16 @@ const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || JWT_SECRET;
 const JWT_ACCESS_TOKEN_TTL = process.env.JWT_ACCESS_TOKEN_TTL || '15m';
 const JWT_REFRESH_TOKEN_TTL = process.env.JWT_REFRESH_TOKEN_TTL || '7d';
 
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'purplekit-secret-change-in-production') {
+    throw new Error('JWT_SECRET must be set to a strong secret in production');
+  }
+
+  if (!process.env.JWT_REFRESH_SECRET) {
+    throw new Error('JWT_REFRESH_SECRET must be explicitly set in production');
+  }
+}
+
 /**
  * Middleware that requires authentication
  * Checks for valid JWT token in Authorization header
